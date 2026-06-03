@@ -148,6 +148,43 @@ def test_datasets_json(runner, load_fixture) -> None:
     assert {d["name"] for d in parsed["datasets"]} >= {"default", "us_ofac_sdn"}
 
 
+# ---------- statements ----------
+
+
+def test_statements_table(runner, load_fixture) -> None:
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/statements").mock(
+            return_value=httpx.Response(200, json=load_fixture("statements"))
+        )
+        result = runner.invoke(
+            app,
+            [
+                *_BASE_FLAGS,
+                "statements",
+                "--canonical-id",
+                "NK-aU5ybkbRFJucf8YMwsJvDw",
+                "-f",
+                "table",
+            ],
+        )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert "John Doe" in result.stdout
+    assert "Johnny D" in result.stdout
+    assert "us_ofac_sdn" in result.stdout
+
+
+def test_statements_404_message_points_at_hosted_api(runner) -> None:
+    """On a self-hosted yente, /statements returns 404 — the CLI shows the rewrapped detail."""
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/statements").mock(
+            return_value=httpx.Response(404, json={"detail": "Not Found"}),
+        )
+        result = runner.invoke(app, [*_BASE_FLAGS, "statements", "--entity-id", "x"])
+    assert result.exit_code == 3  # API error
+    combined = result.stdout + result.stderr
+    assert "hosted OpenSanctions API" in combined
+
+
 # ---------- algorithms ----------
 
 

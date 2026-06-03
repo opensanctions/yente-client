@@ -83,6 +83,85 @@ def test_algorithms_returns_algorithms_response(make_client, load_fixture) -> No
     assert {a.name for a in r.algorithms} == {"logic-v2", "name-matcher"}
 
 
+# ---------- statements (hosted only) ----------
+
+
+def test_statements_returns_statements_response(make_client, load_fixture) -> None:
+    import httpx as _httpx
+
+    from yente_client.models import StatementsResponse
+
+    seen: list[_httpx.Request] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        seen.append(request)
+        return _httpx.Response(200, json=load_fixture("statements"))
+
+    with make_client(handler=handler) as c:
+        r = c.statements(canonical_id="NK-aU5ybkbRFJucf8YMwsJvDw", limit=50)
+    assert isinstance(r, StatementsResponse)
+    assert seen[0].url.path == "/statements"
+    assert seen[0].url.params["canonical_id"] == "NK-aU5ybkbRFJucf8YMwsJvDw"
+    assert seen[0].url.params["limit"] == "50"
+    assert len(r.results) == 2
+    assert r.results[0].schema_ == "Person"
+    assert r.results[0].prop == "name"
+    assert r.results[0].original_value == "John Doe (Esq.)"
+    assert r.results[1].lang is None
+
+
+def test_statements_404_on_selfhosted_yente(make_client) -> None:
+    """Self-hosted yente returns 404; the SDK rewraps with a pointed message."""
+    import httpx as _httpx
+    import pytest
+
+    from yente_client.exceptions import NotFoundError
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        return _httpx.Response(404, json={"detail": "Not Found"})
+
+    with make_client(handler=handler) as c, pytest.raises(NotFoundError) as exc_info:
+        c.statements(entity_id="anything")
+    msg = str(exc_info.value)
+    assert "/statements endpoint is not available" in msg
+    assert "hosted OpenSanctions API" in msg
+    # The original 404 is preserved.
+    assert exc_info.value.status_code == 404
+
+
+def test_statements_passes_all_filter_params(make_client, load_fixture) -> None:
+    import httpx as _httpx
+
+    seen: list[_httpx.Request] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        seen.append(request)
+        return _httpx.Response(200, json=load_fixture("statements"))
+
+    with make_client(handler=handler) as c:
+        c.statements(
+            dataset="us_ofac_sdn",
+            entity_id="ofac-1234",
+            canonical_id="NK-aU5ybkbRFJucf8YMwsJvDw",
+            prop="alias",
+            value="Johnny D",
+            schema="Person",
+            sort=["first_seen", "prop"],
+            limit=10,
+            offset=20,
+        )
+    params = seen[0].url.params
+    assert params["dataset"] == "us_ofac_sdn"
+    assert params["entity_id"] == "ofac-1234"
+    assert params["canonical_id"] == "NK-aU5ybkbRFJucf8YMwsJvDw"
+    assert params["prop"] == "alias"
+    assert params["value"] == "Johnny D"
+    assert params["schema"] == "Person"
+    assert params.get_list("sort") == ["first_seen", "prop"]
+    assert params["limit"] == "10"
+    assert params["offset"] == "20"
+
+
 # ---------- fetch ----------
 
 

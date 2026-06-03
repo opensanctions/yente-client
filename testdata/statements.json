@@ -1,0 +1,35 @@
+{
+  "results": [
+    {
+      "id": "0000ad52d4d91a8000000000000000000000000000000001",
+      "entity_id": "ofac-1234",
+      "canonical_id": "NK-aU5ybkbRFJucf8YMwsJvDw",
+      "prop": "name",
+      "prop_type": "name",
+      "schema": "Person",
+      "value": "John Doe",
+      "original_value": "John Doe (Esq.)",
+      "dataset": "us_ofac_sdn",
+      "lang": "eng",
+      "first_seen": "2024-03-12T08:14:22+00:00",
+      "last_seen": "2026-05-30T01:42:00+00:00"
+    },
+    {
+      "id": "0000ad52d4d91a8000000000000000000000000000000002",
+      "entity_id": "ofac-1234",
+      "canonical_id": "NK-aU5ybkbRFJucf8YMwsJvDw",
+      "prop": "alias",
+      "prop_type": "name",
+      "schema": "Person",
+      "value": "Johnny D",
+      "original_value": null,
+      "dataset": "us_ofac_sdn",
+      "lang": null,
+      "first_seen": "2024-03-12T08:14:22+00:00",
+      "last_seen": "2026-05-30T01:42:00+00:00"
+    }
+  ],
+  "total": {"value": 2, "relation": "eq"},
+  "limit": 50,
+  "offset": 0
+}

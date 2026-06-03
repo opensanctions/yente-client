@@ -344,6 +344,72 @@ def datasets_command(
         print_table(rows, headers=["name", "title", "version", "current"])
 
 
+def statements_command(
+    ctx: typer.Context,
+    dataset: str | None = typer.Option(None, "--dataset", "-d", help="Restrict to one dataset."),
+    entity_id: str | None = typer.Option(None, "--entity-id", help="Source entity ID."),
+    canonical_id: str | None = typer.Option(
+        None, "--canonical-id", help="Post-deduplication entity ID."
+    ),
+    prop: str | None = typer.Option(None, "--prop", help="Property name (e.g. `alias`)."),
+    value: str | None = typer.Option(None, "--value", help="Exact property value."),
+    schema: str | None = typer.Option(None, "--schema", "-s", help="Entity schema name."),
+    sort: list[str] | None = typer.Option(
+        None, "--sort", help="Sort key(s). Repeatable. Default: canonical_id, prop."
+    ),
+    limit: int = typer.Option(50, "--limit", "-l", help="Page size (server-capped)."),
+    offset: int = typer.Option(0, "--offset", help="Pagination offset."),
+    format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
+) -> None:
+    """Read raw entity data as statements (hosted-only).
+
+    Statements track lineage: each row records a single
+    ``(entity_id, prop, value)`` claim plus the dataset that asserted it
+    and when. Useful for diagnostics — finding deduplication issues,
+    investigating where a value came from, auditing data quality.
+
+    Available only on the hosted OpenSanctions API. Self-hosted yente
+    deployments don't ship the backing data store and return 404 here.
+    """
+    with _with_client(ctx) as client:
+        response = client.statements(
+            dataset=dataset,
+            entity_id=entity_id,
+            canonical_id=canonical_id,
+            prop=prop,
+            value=value,
+            schema=schema,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+
+    fmt = resolve_format(format_)
+    if fmt == Format.JSON:
+        print_json(response)
+    elif fmt == Format.JSONL:
+        print_jsonl(response.results)
+    else:
+        rows = [
+            [
+                s.canonical_id,
+                s.prop,
+                _truncate(s.value, 50),
+                s.dataset,
+                s.first_seen.date().isoformat() if s.first_seen else "",
+            ]
+            for s in response.results
+        ]
+        print_table(
+            rows,
+            headers=["canonical_id", "prop", "value", "dataset", "first_seen"],
+            title=f"{len(response.results)} of {response.total.value} statement(s)",
+        )
+
+    if not response.results:
+        raise typer.Exit(code=1)
+
+
 def algorithms_command(
     ctx: typer.Context,
     format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
@@ -943,6 +1009,7 @@ def register(app: typer.Typer) -> None:
     """Attach all subcommands to ``app``."""
     app.command("status", epilog=_STATUS_EPILOG)(status_command)
     app.command("datasets", epilog=_DATASETS_EPILOG)(datasets_command)
+    app.command("statements", epilog=_STATEMENTS_EPILOG)(statements_command)
     app.command("algorithms", epilog=_ALGORITHMS_EPILOG)(algorithms_command)
     app.command("fetch", epilog=_FETCH_EPILOG)(fetch_command)
     app.command("search", epilog=_SEARCH_EPILOG)(search_command)
@@ -1004,6 +1071,29 @@ OUTPUT (with -f json):
    current: [str], outdated: [str], index_stale: bool}
 
 The `name` field is what you pass to `-d` / `--datasets` on match/search.
+"""
+
+_STATEMENTS_EPILOG = """\
+EXAMPLES:
+  yente-cli statements --entity-id ofac-1234              # lineage for one source entity
+  yente-cli statements --canonical-id NK-aU5y... -f json  # post-dedup view
+  yente-cli statements --prop alias --dataset us_ofac_sdn --limit 20
+  yente-cli statements --value "Acme LLC" -f jsonl        # find every claim of a value
+
+OUTPUT (with -f json):
+  StatementsResponse: {results: [Statement, ...], total: {value, relation},
+                       limit, offset}
+  Each Statement: {id, entity_id, canonical_id, prop, prop_type, schema,
+                   value, original_value, dataset, lang, first_seen, last_seen}
+
+EXIT CODES:
+  0  ≥1 row returned
+  1  zero rows
+  3  API error (incl. 404 on self-hosted yente — the endpoint is hosted-only)
+  4  network/transport error
+
+For background on the statement-based data model see
+https://www.opensanctions.org/docs/statements/
 """
 
 _ALGORITHMS_EPILOG = """\

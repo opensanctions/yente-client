@@ -38,6 +38,7 @@ To point at a self-hosted yente, set `YENTE_BASE_URL` or pass
 | `search` | Free-text search across one or more datasets, for backing user-facing search UIs. |
 | `fetch` | Fetch one entity by ID. |
 | `datasets` | List indexed datasets and their freshness. |
+| `statements` | Statement-level data lineage (hosted API only). |
 | `algorithms` | List enabled matching algorithms and the server defaults. |
 | `status` | Client setup, server health, and loaded datasets, at a glance. |
 | `ref schemas` | List every FollowTheMoney (FtM) schema (offline; uses bundled snapshot). |

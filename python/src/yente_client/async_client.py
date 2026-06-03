@@ -20,7 +20,7 @@ from yente_client._translation import (
 )
 from yente_client.client import _check_matchable_schema
 from yente_client.entities import EntityInput
-from yente_client.exceptions import TransportError
+from yente_client.exceptions import NotFoundError, TransportError
 from yente_client.filters import MatchFilters, SearchFilters
 from yente_client.models import (
     AdjacentPropertyResponse,
@@ -30,6 +30,7 @@ from yente_client.models import (
     Entity,
     MatchResponse,
     SearchResponse,
+    StatementsResponse,
     StatusResponse,
 )
 
@@ -128,6 +129,54 @@ class AsyncClient:
     async def algorithms(self) -> AlgorithmsResponse:
         """Async equivalent of :meth:`yente_client.client.Client.algorithms`."""
         return AlgorithmsResponse.model_validate(await self._request("GET", "/algorithms"))
+
+    # ----- statements (hosted only) -----
+
+    async def statements(
+        self,
+        *,
+        dataset: str | None = None,
+        entity_id: str | None = None,
+        canonical_id: str | None = None,
+        prop: str | None = None,
+        value: str | None = None,
+        schema: str | None = None,
+        sort: list[str] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> StatementsResponse:
+        """Async equivalent of :meth:`yente_client.client.Client.statements`."""
+        params: dict[str, Any] = {"offset": offset}
+        if dataset is not None:
+            params["dataset"] = dataset
+        if entity_id is not None:
+            params["entity_id"] = entity_id
+        if canonical_id is not None:
+            params["canonical_id"] = canonical_id
+        if prop is not None:
+            params["prop"] = prop
+        if value is not None:
+            params["value"] = value
+        if schema is not None:
+            params["schema"] = schema
+        if sort:
+            params["sort"] = sort
+        if limit is not None:
+            params["limit"] = limit
+        try:
+            raw = await self._request("GET", "/statements", params=params)
+        except NotFoundError as exc:
+            raise NotFoundError(
+                status_code=exc.status_code,
+                detail=(
+                    "The /statements endpoint is not available on this server. "
+                    "Statement-level access is provided only by the hosted "
+                    "OpenSanctions API; self-hosted yente deployments don't "
+                    "ship the backing Postgres instance and return 404 here."
+                ),
+                response=exc.response,
+            ) from exc
+        return StatementsResponse.model_validate(raw)
 
     # ----- entity fetch -----
 

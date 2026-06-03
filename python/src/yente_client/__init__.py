@@ -40,6 +40,8 @@ from yente_client.models import (
     SearchFacet,
     SearchFacetItem,
     SearchResponse,
+    Statement,
+    StatementsResponse,
     StatusResponse,
     TotalSpec,
 )
@@ -61,6 +63,8 @@ __all__ = [
     "Algorithm",
     "AlgorithmsResponse",
     "DatasetsResponse",
+    "Statement",
+    "StatementsResponse",
     "Dataset",
     "Entity",
     "FeatureResult",

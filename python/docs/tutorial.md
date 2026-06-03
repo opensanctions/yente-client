@@ -327,6 +327,26 @@ The model is a *snapshot*, pinned at SDK-release time. Properties added
 upstream don't appear until the next SDK release. Maintainers run
 `make regen-model` to refresh.
 
+## 9. Statements — lineage and diagnostics (hosted only)
+
+The `/statements` endpoint exposes the atomic claims that compose into
+entities: each row is one `(entity_id, prop, value)` triple plus the
+dataset that asserted it, the language, the pre-cleaning original value,
+and the first/last-seen timestamps. Reach for it for diagnostics:
+tracking where a value came from, finding deduplication issues,
+auditing data quality. See the
+[statement-based data model](https://www.opensanctions.org/docs/statements/)
+for background.
+
+```python
+for stmt in client.statements(canonical_id="NK-aU5ybkbRFJucf8YMwsJvDw").results:
+    print(stmt.dataset, stmt.prop, stmt.value, stmt.first_seen)
+```
+
+Only the hosted OpenSanctions API serves this endpoint — it is backed
+by a Postgres instance that self-hosted yente deployments don't ship.
+Calls against a self-hosted server surface as `NotFoundError`.
+
 ## Where to go next
 
 - [CLI overview](cli.md) — `yente-cli`, agent automations, shell pipelines.

@@ -242,5 +242,43 @@ class AdjacentResponse(BaseModel):
     adjacent: dict[str, AdjacentPropertyResponse]
 
 
+class Statement(BaseModel):
+    """One row of the statement-level data lineage stream.
+
+    Statements are the atomic claims that compose into entities — each
+    statement records a single ``(entity_id, prop, value)`` triple plus
+    provenance metadata (which dataset asserted it, when it was first
+    and last seen, language, original pre-cleaning value). See the
+    `statement-based data model <https://www.opensanctions.org/docs/statements/>`_
+    for background.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    id: str
+    entity_id: str
+    canonical_id: str
+    prop: str
+    prop_type: str
+    schema_: str = Field(alias="schema")
+    value: str
+    original_value: str | None = None
+    dataset: str
+    lang: str | None = None
+    first_seen: datetime
+    last_seen: datetime
+
+
+class StatementsResponse(BaseModel):
+    """Body of ``/statements`` — paginated list of statement rows."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    results: list[Statement]
+    total: TotalSpec
+    limit: int
+    offset: int
+
+
 # Rebuild for the recursive Entity → Entity reference inside `properties`.
 Entity.model_rebuild()

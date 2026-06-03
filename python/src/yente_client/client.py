@@ -13,7 +13,7 @@ from yente_client._translation import (
     unwrap_match_response,
 )
 from yente_client.entities import EntityInput
-from yente_client.exceptions import ConfigurationError, TransportError
+from yente_client.exceptions import ConfigurationError, NotFoundError, TransportError
 from yente_client.filters import MatchFilters, SearchFilters
 from yente_client.models import (
     AdjacentPropertyResponse,
@@ -23,6 +23,7 @@ from yente_client.models import (
     Entity,
     MatchResponse,
     SearchResponse,
+    StatementsResponse,
     StatusResponse,
 )
 from yente_client.schemas import is_matchable_schema, matchable_schemata
@@ -148,6 +149,78 @@ class Client:
     def algorithms(self) -> AlgorithmsResponse:
         """Fetch the list of enabled matching algorithms and the server's defaults."""
         return AlgorithmsResponse.model_validate(self._request("GET", "/algorithms"))
+
+    # ----- statements (hosted only) -----
+
+    def statements(
+        self,
+        *,
+        dataset: str | None = None,
+        entity_id: str | None = None,
+        canonical_id: str | None = None,
+        prop: str | None = None,
+        value: str | None = None,
+        schema: str | None = None,
+        sort: list[str] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> StatementsResponse:
+        """Read raw entity data as statements — for lineage and diagnostics.
+
+        Use this for tracking where a value came from, when it was first
+        observed, and which dataset asserted it. See the
+        `statement-based data model <https://www.opensanctions.org/docs/statements/>`_
+        for context.
+
+        Only the hosted OpenSanctions API serves this endpoint — it is
+        backed by a Postgres instance that self-hosted yente deployments
+        don't ship. Self-hosted servers return ``404``, which surfaces
+        as :class:`NotFoundError` with a pointed message.
+
+        Args:
+            dataset: Restrict to statements from this dataset.
+            entity_id: Filter by the source entity ID
+                (e.g. ``"ofac-1234"``).
+            canonical_id: Filter by the post-deduplication entity ID
+                (e.g. ``"NK-1234"``).
+            prop: Filter by property name (e.g. ``"alias"``).
+            value: Filter by exact property value.
+            schema: Filter by entity schema (e.g. ``"LegalEntity"``).
+            sort: Sort keys; defaults to ``["canonical_id", "prop"]``.
+            limit: Page size; server-capped (typically at 5000).
+            offset: Pagination offset.
+        """
+        params: dict[str, Any] = {"offset": offset}
+        if dataset is not None:
+            params["dataset"] = dataset
+        if entity_id is not None:
+            params["entity_id"] = entity_id
+        if canonical_id is not None:
+            params["canonical_id"] = canonical_id
+        if prop is not None:
+            params["prop"] = prop
+        if value is not None:
+            params["value"] = value
+        if schema is not None:
+            params["schema"] = schema
+        if sort:
+            params["sort"] = sort
+        if limit is not None:
+            params["limit"] = limit
+        try:
+            raw = self._request("GET", "/statements", params=params)
+        except NotFoundError as exc:
+            raise NotFoundError(
+                status_code=exc.status_code,
+                detail=(
+                    "The /statements endpoint is not available on this server. "
+                    "Statement-level access is provided only by the hosted "
+                    "OpenSanctions API; self-hosted yente deployments don't "
+                    "ship the backing Postgres instance and return 404 here."
+                ),
+                response=exc.response,
+            ) from exc
+        return StatementsResponse.model_validate(raw)
 
     # ----- entity fetch -----
 
