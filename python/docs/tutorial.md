@@ -354,6 +354,48 @@ Only the OpenSanctions API serves this endpoint — it is backed by a
 Postgres instance that yente does not ship. Calls against a yente
 instance surface as `NotFoundError`.
 
+### Following entity references
+
+Entity-typed properties (`Sanction.entity`, `Ownership.owner`,
+`Family.relative`, …) encode references between entities. In a
+statement row, each such reference carries:
+
+- `prop_type` = `entity`
+- `value` = the canonical_id of the referenced entity
+- `original_value` = the entity_id of the referenced entity in its
+  source system
+
+The statements stream is therefore a graph that can be traversed in
+either direction.
+
+**Forward** (what does this entity reference?). Pull all statements
+for the entity and pick out the rows whose property is entity-typed:
+
+```python
+for stmt in client.statements(canonical_id="Q7747").results:
+    if stmt.prop_type == "entity":
+        print(stmt.prop, "→", stmt.value)
+```
+
+**Reverse** (what references this entity?). Filter on the schema,
+the property name, and the target's canonical_id. To find every
+Sanction that asserts Putin (`Q7747`) as its target:
+
+```python
+for stmt in client.statements(
+    schema="Sanction",
+    prop="entity",
+    value="Q7747",
+).results:
+    print(stmt.dataset, stmt.entity_id)
+```
+
+Each row is one source's assertion: a single canonical Sanction may
+appear once per source list that recorded it. To find references
+across all entity-typed properties of a schema (e.g. both
+`Ownership.owner` and `Ownership.asset`), issue one query per
+property.
+
 ## Where to go next
 
 - [CLI overview](cli.md) — `yente-cli`, agent automations, shell pipelines.

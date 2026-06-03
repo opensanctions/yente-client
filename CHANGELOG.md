@@ -42,6 +42,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tutorial and `yente-cli match --help` now explain schema inheritance
   (e.g. `LegalEntity` covers `Person` + `Organization` + `Company` +
   `PublicBody` in a single call) and when to prefer the parent schema.
+- Tutorial section 9 gains a "Following entity references" subsection
+  that documents the canonical_id/entity_id structure of entity-typed
+  statements and shows forward + reverse graph-traversal patterns.
+  The CLI `statements` epilog mirrors the reverse-traversal example.
 - Per-property matchability surfaces in `ref schema NAME` (table column
   and `-f json` field) under its real name `matchable`, not the
   previously-invented `directly_scored`. Accompanying legend states the

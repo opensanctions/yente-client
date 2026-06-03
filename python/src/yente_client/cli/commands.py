@@ -1106,6 +1106,13 @@ CANONICAL VS SOURCE ID:
   you got from `match` / `search` / `fetch`. --entity-id returns only
   what one specific source asserted; use it for source-level audits.
 
+GRAPH TRAVERSAL:
+  Entity-typed properties carry the referenced entity's canonical_id as
+  `value` and the source entity_id as `original_value`. Filter on these
+  to traverse the graph in reverse. To find every Sanction on Putin
+  (Q7747):
+    yente-cli statements --schema Sanction --prop entity --value Q7747
+
 OUTPUT (with -f json):
   StatementsResponse: {results: [Statement, ...], total: {value, relation},
                        limit, offset}
