@@ -2,7 +2,7 @@
 
 The yente-client Python SDK and `yente-cli` command-line tool for
 matching entities against the [OpenSanctions API](https://www.opensanctions.org)
-and self-deployed [yente](https://github.com/opensanctions/yente)
+and on-premise [yente](https://github.com/opensanctions/yente)
 instances.
 
 ## Start here

@@ -42,7 +42,7 @@ To point at a yente instance, set `YENTE_BASE_URL` or pass
 | `algorithms` | List enabled matching algorithms and the server defaults. |
 | `status` | Client setup, server health, and loaded datasets, at a glance. |
 | `ref schemas` | List every FollowTheMoney (FtM) schema (offline; uses bundled snapshot). |
-| `ref schema NAME` | Detail view: properties, types, `directly_scored` flag, deprecation. |
+| `ref schema NAME` | Detail view: properties, types, `matchable` flag, deprecation. |
 | `ref topics` | The `Topic` enum (`sanction`, `role.pep`, `crime.fraud`, …). |
 | `ref countries` | The country-code to label lookup. |
 

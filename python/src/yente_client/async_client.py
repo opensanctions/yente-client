@@ -40,7 +40,7 @@ class AsyncClient:
 
     Use as an async context manager for deterministic cleanup of the underlying
     ``httpx.AsyncClient``. See :class:`yente_client.Client` for the sync
-    counterpart and the design doc §4.6 for the full constructor contract.
+    counterpart.
     """
 
     def __init__(
@@ -66,7 +66,7 @@ class AsyncClient:
             proxy=proxy,
             headers=headers,
         )
-        # Async transport is different from sync. Honour a caller-supplied
+        # Async transport is different from sync. Honor a caller-supplied
         # MockTransport for tests; otherwise stack httpx's connection-level
         # retries (DNS, connection-refused) for free.
         kwargs["transport"] = transport or httpx.AsyncHTTPTransport(retries=2)
