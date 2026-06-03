@@ -172,6 +172,14 @@ class Client:
         `statement-based data model <https://www.opensanctions.org/docs/statements/>`_
         for context.
 
+        **Typically you want ``canonical_id=``**, passing the ID returned
+        by :meth:`match` / :meth:`search` / :meth:`fetch`. It returns every
+        source fragment that was deduplicated into the canonical entity.
+        ``entity_id=`` returns only one source's pre-dedup fragment —
+        useful for source-level audits, but the same person across five
+        sanctions lists has five distinct ``entity_id`` values and only
+        one ``canonical_id``.
+
         Only the OpenSanctions API serves this endpoint — it is backed
         by a Postgres instance that yente doesn't ship. A yente instance
         returns ``404``, which surfaces here as :class:`NotFoundError`
@@ -180,9 +188,10 @@ class Client:
         Args:
             dataset: Restrict to statements from this dataset.
             entity_id: Filter by the source entity ID
-                (e.g. ``"ofac-1234"``).
+                (e.g. ``"ofac-1234"``). Pre-deduplication; usually
+                not what you want — prefer ``canonical_id``.
             canonical_id: Filter by the post-deduplication entity ID
-                (e.g. ``"NK-1234"``).
+                (e.g. ``"NK-1234"``). The typical choice.
             prop: Filter by property name (e.g. ``"alias"``).
             value: Filter by exact property value.
             schema: Filter by entity schema (e.g. ``"LegalEntity"``).

@@ -342,6 +342,14 @@ for stmt in client.statements(canonical_id="NK-aU5ybkbRFJucf8YMwsJvDw").results:
     print(stmt.dataset, stmt.prop, stmt.value, stmt.first_seen)
 ```
 
+**Use `canonical_id=` for almost every call.** Pass the ID returned by
+`match` / `search` / `fetch`. It returns every source fragment that was
+deduplicated into the canonical entity — usually what you want when
+investigating a record. `entity_id=` returns only one source's pre-dedup
+fragment, which is useful for source-level audits but is *not* a
+substitute for `canonical_id`: the same person across five sanctions
+lists has five distinct `entity_id` values and only one `canonical_id`.
+
 Only the OpenSanctions API serves this endpoint — it is backed by a
 Postgres instance that yente does not ship. Calls against a yente
 instance surface as `NotFoundError`.

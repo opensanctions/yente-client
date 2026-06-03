@@ -347,9 +347,19 @@ def datasets_command(
 def statements_command(
     ctx: typer.Context,
     dataset: str | None = typer.Option(None, "--dataset", "-d", help="Restrict to one dataset."),
-    entity_id: str | None = typer.Option(None, "--entity-id", help="Source entity ID."),
     canonical_id: str | None = typer.Option(
-        None, "--canonical-id", help="Post-deduplication entity ID."
+        None,
+        "--canonical-id",
+        "-c",
+        help="Post-deduplication entity ID (e.g. `NK-...`). The typical choice.",
+    ),
+    entity_id: str | None = typer.Option(
+        None,
+        "--entity-id",
+        help=(
+            "Source entity ID (e.g. `ofac-1234`). Returns only the fragment from "
+            "that one source; usually not what you want — see --canonical-id."
+        ),
     ),
     prop: str | None = typer.Option(None, "--prop", help="Property name (e.g. `alias`)."),
     value: str | None = typer.Option(None, "--value", help="Exact property value."),
@@ -367,6 +377,16 @@ def statements_command(
     ``(entity_id, prop, value)`` claim plus the dataset that asserted it
     and when. Useful for diagnostics — finding deduplication issues,
     investigating where a value came from, auditing data quality.
+
+    Use ``-c`` / ``--canonical-id`` to fetch all statements for an entity
+    (the ID returned by ``match`` / ``search`` / ``fetch``). This is the
+    typical choice: it returns every source fragment that was
+    deduplicated into the canonical entity.
+
+    Use ``--entity-id`` only when you want statements from one specific
+    source: it returns the pre-dedup fragment as that source asserted
+    it. The same person on five sanctions lists has five distinct
+    ``entity_id`` values but one ``canonical_id``.
 
     Available only on the OpenSanctions API. yente does not ship the
     backing data store and returns 404 here.
@@ -1075,10 +1095,16 @@ The `name` field is what you pass to `-d` / `--datasets` on match/search.
 
 _STATEMENTS_EPILOG = """\
 EXAMPLES:
-  yente-cli statements --entity-id ofac-1234              # lineage for one source entity
-  yente-cli statements --canonical-id NK-aU5y... -f json  # post-dedup view
-  yente-cli statements --prop alias --dataset us_ofac_sdn --limit 20
+  yente-cli statements -c NK-aU5y... -f json              # all lineage for a canonical entity
+  yente-cli statements -c NK-aU5y... --prop alias         # narrow to one property
+  yente-cli statements --entity-id ofac-1234              # one source's fragment (pre-dedup)
   yente-cli statements --value "Acme LLC" -f jsonl        # find every claim of a value
+
+CANONICAL VS SOURCE ID:
+  -c / --canonical-id is the typical choice — it returns every source
+  fragment that was deduplicated into one canonical entity. Pass the ID
+  you got from `match` / `search` / `fetch`. --entity-id returns only
+  what one specific source asserted; use it for source-level audits.
 
 OUTPUT (with -f json):
   StatementsResponse: {results: [Statement, ...], total: {value, relation},
