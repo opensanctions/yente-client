@@ -149,15 +149,11 @@ When both are supplied, the kwargs win on any field they specify.
 ### Querying a parent schema matches descendants too
 
 FtM schemas form an inheritance tree. Querying a parent schema matches
-every matchable descendant: the server expands `schema` to its
-matchable descendant set at query time, and a single `match()` call
-searches the union.
-
-The most useful parent for screening is `LegalEntity`, which sits
-above both `Person` and `Organization` (and therefore `Company`,
-`PublicBody`, …). Reach for it when the input could be either an
-individual or an organization — common with raw payee strings, list
-entries, freeform investigative notes:
+every matchable descendant in a single call. The most useful parent for
+screening is `LegalEntity`, which covers `Person`, `Organization`,
+`Company`, and `PublicBody` — reach for it when the input could be
+either an individual or an organization (raw payee strings, list
+entries, freeform investigative notes):
 
 ```python
 from yente_client import LegalEntity
@@ -169,53 +165,15 @@ response = client.match(
 )
 ```
 
-Use the most specific schema you can confidently set — `Person` when
-you know it's an individual, `Company` when it's a corporation. The
-parent-schema fallback is for genuine ambiguity, not laziness; a
-specific schema gives the matcher access to schema-specific
-properties (e.g. `birthDate` on `Person`) and tighter scoring.
+### Notes on the matchable flag
 
-### Schema-level matchable: the SDK refuses non-matchable schemas
+Schemas with `matchable: false` (e.g. `Document`) can't be queried;
+`client.match()` raises `ConfigurationError` before the call. Use
+`yente-cli ref schemas --matchable` to find valid targets.
 
-The server refuses `/match` queries against non-matchable schemas
-(`Document`, `Article`, `Vehicle`, …). The SDK preempts the refusal
-client-side and raises `ConfigurationError` before the round-trip:
-
-```python
-from yente_client import Document
-from yente_client.exceptions import ConfigurationError
-
-try:
-    client.match(Document(fileName="x.pdf"))
-except ConfigurationError as exc:
-    print(exc)
-    # Schema 'Document' is not a matchable target for /match. …
-```
-
-Use `yente-cli ref schemas --matchable` (or
-[`is_matchable_schema()`](api/schemas.md)) to find valid targets.
-
-### Property-level matchable is a routing detail, not a usefulness flag
-
-The FtM model's per-property `matchable` flag — shown in the table column
-of the same name in `yente-cli ref schema NAME` — governs one specific
-path through the matcher: whether the property value is used as a
-candidate-filter clause in the search query. It is **not** an indicator
-of whether the property is useful for matching.
-
-Non-matchable properties are real scoring inputs. They drive scoring
-through dedicated matcher features:
-
-- **Name parts** (`firstName`, `middleName`, `lastName`, `fatherName`, …)
-  feed name reconstruction and contribute to name-comparison features.
-- **`weakAlias` and `abbreviation`** are cross-compared against
-  candidate names during scoring.
-- **`gender`** is consumed by a mismatch feature: disagreement lowers
-  the score.
-
-The practical rule is simple: **send every property you have**. Don't
-filter by the `matchable` flag; the matcher routes each property to
-the right code path on its own.
+The per-property `matchable` flag (shown by `yente-cli ref schema NAME`)
+is a routing detail inside the matcher, not a usefulness indicator.
+Send every property you have.
 
 ## 4. Fetch and adjacency
 
@@ -264,9 +222,6 @@ See [`AdjacentResponse`](api/models.md) and
 you're building an end-user search experience: autocomplete fields,
 browse pages, search-this-database forms where a human is typing into
 the input.
-
-For any matching task, including those with very partial input, use
-`match()`. `search()` is not a fallback for incomplete data.
 
 ```python
 results = client.search("acme", datasets=["default"], schema="Company")

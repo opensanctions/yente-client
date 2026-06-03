@@ -9,14 +9,8 @@ examples) lives in `yente-cli <command> --help`.
 
 ## When to reach for the CLI vs the SDK
 
-| Situation | Reach for |
-|---|---|
-| Ad-hoc lookup — *"is Acme on the sanctions list?"* | CLI |
-| Shell pipeline (`jq`, `awk`, …) | CLI |
-| LLM-agent automation that needs structured JSON | CLI (`-f jsonl`) |
-| Embedded screening inside a Python service | SDK |
-| Long-running background workload | SDK |
-| Bulk screening (many entities) | SDK + `asyncio.gather` for now |
+Use the CLI for ad-hoc lookups, shell pipelines, and agent automations;
+use the SDK for embedded screening and long-running services.
 
 ## Install
 
@@ -109,22 +103,11 @@ Every command has an EXAMPLES block in its `--help`.
 
 ## Agent-friendly help
 
-The CLI is designed for LLM coding agents that have never read the
-OpenSanctions docs:
-
-- **`yente-cli --help`** opens with a *WORKFLOWS* block (intent →
-  command) and a *PICK A COMMAND* dispatch table. Includes a NOTE
-  block explicitly steering matching tasks away from `search`.
-- **Per-command `--help` carries an EXAMPLES epilog** with 2–4
-  realistic invocations.
-- **OUTPUT blocks** in `--help` document the JSON shape so agents know
-  what fields they get back without invoking-then-parsing.
-- **Error messages point to the next command.** Examples:
-  - `Unknown schema 'Persn'. … Did you mean: Person?`
-  - `Property 'birth_date' not on Person. … Did you mean: birthDate?`
-  - `Schema 'Document' is not a matchable target … (run `yente-cli ref schemas --matchable` …).`
-
-Run `yente-cli --help` first.
+Run `yente-cli --help` first. The top-level help carries a workflow
+block (intent → command) and a dispatch table; per-command `--help`
+carries worked examples, the output JSON shape, and exit codes. Error
+messages on bad schema or property names include fuzzy suggestions
+("Did you mean: `birthDate`?").
 
 ## Where to go next
 

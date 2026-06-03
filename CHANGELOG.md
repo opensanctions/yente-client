@@ -46,5 +46,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   flag is a routing detail inside the matcher, not a "useful for
   matching" indicator — non-matchable properties (`firstName`,
   `weakAlias`, `gender`, …) are real scoring inputs.
+- Tutorial and CLI overview trimmed: the matchable-flag subsections,
+  CLI-vs-SDK comparison, and agent-help enumeration compress to
+  one-liners (full nuance lives in `--help`, the `ref schema` legend,
+  and the API reference).
 
 [Unreleased]: https://github.com/opensanctions/yente-client/compare/HEAD
