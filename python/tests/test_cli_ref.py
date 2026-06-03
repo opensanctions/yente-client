@@ -86,29 +86,30 @@ def test_ref_schema_marks_deprecated(runner) -> None:
     assert second_name["deprecated"] is True
 
 
-def test_ref_schema_marks_directly_scored(runner) -> None:
-    """birthDate is explicitly matchable; firstName falls through to type-default (not scored)."""
+def test_ref_schema_property_matchable_resolves_type_defaults(runner) -> None:
+    """birthDate is explicitly matchable; firstName falls through to type-default (False)."""
     summary = json.loads(runner.invoke(app, ["ref", "schema", "Person", "-f", "json"]).stdout)
     by_name = {p["name"]: p for p in summary["properties"]}
-    assert by_name["birthDate"]["directly_scored"] is True
-    assert by_name["citizenship"]["directly_scored"] is True
-    # Non-scored properties that still impact matching via indirect paths
-    # (name reconstruction, cross-comparison, qualifier features).
-    assert by_name["firstName"]["directly_scored"] is False
-    assert by_name["lastName"]["directly_scored"] is False
-    assert by_name["gender"]["directly_scored"] is False
+    assert by_name["birthDate"]["matchable"] is True
+    assert by_name["citizenship"]["matchable"] is True
+    # Non-matchable per the FtM model, but still actively used in scoring
+    # via dedicated matcher features. The flag does not mean "useful".
+    assert by_name["firstName"]["matchable"] is False
+    assert by_name["lastName"]["matchable"] is False
+    assert by_name["gender"]["matchable"] is False
 
 
 def test_ref_schema_table_includes_legend(runner) -> None:
-    """The table view explains that non-`scored` properties can still impact results."""
+    """The table view explains the FtM matchable flag's actual meaning."""
     result = runner.invoke(app, ["ref", "schema", "Person", "-f", "table"])
     assert result.exit_code == 0
-    # Column header
-    assert "scored" in result.stdout
-    # Legend mentions the three indirect mechanisms (paraphrased).
-    assert "name parts" in result.stdout
+    # Column header uses the FtM term as-is.
+    assert "matchable" in result.stdout
+    # Legend names some of the non-matchable properties that still score.
+    assert "firstName" in result.stdout
     assert "weakAlias" in result.stdout
-    assert "gender acts as a mismatch penalty" in result.stdout
+    # Legend states the flag is NOT a "useful for matching" indicator.
+    assert "NOT a 'useful for matching'" in result.stdout
 
 
 def test_ref_schema_unknown_exits_two(runner) -> None:

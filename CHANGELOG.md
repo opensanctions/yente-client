@@ -40,5 +40,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tutorial and `yente-cli match --help` now explain schema inheritance
   (e.g. `LegalEntity` covers `Person` + `Organization` + `Company` +
   `PublicBody` in a single call) and when to prefer the parent schema.
+- Per-property matchability surfaces in `ref schema NAME` (table column
+  and `-f json` field) under its real name `matchable`, not the
+  previously-invented `directly_scored`. Accompanying legend states the
+  flag is a routing detail inside the matcher, not a "useful for
+  matching" indicator — non-matchable properties (`firstName`,
+  `weakAlias`, `gender`, …) are real scoring inputs.
 
 [Unreleased]: https://github.com/opensanctions/yente-client/compare/HEAD

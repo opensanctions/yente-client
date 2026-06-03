@@ -195,23 +195,27 @@ except ConfigurationError as exc:
 Use `yente-cli ref schemas --matchable` (or
 [`is_matchable_schema()`](api/schemas.md)) to find valid targets.
 
-### Property-level: "directly scored" is a narrow signal
+### Property-level matchable is a routing detail, not a usefulness flag
 
-Per-property `matchable` in the FtM model marks properties that
-contribute to a match score as a **primary** matching feature.
-Properties without the flag can still meaningfully impact match
-results. Sending them is generally fine, and often helpful:
+The FtM model's per-property `matchable` flag — shown in the table column
+of the same name in `yente-cli ref schema NAME` — governs one specific
+path through the matcher: whether the property value is used as a
+candidate-filter clause in the search query. It is **not** an indicator
+of whether the property is useful for matching.
+
+Non-matchable properties are real scoring inputs. They drive scoring
+through dedicated matcher features:
 
 - **Name parts** (`firstName`, `middleName`, `lastName`, `fatherName`, …)
-  get folded into a synthesized `name` value if no name is set.
+  feed name reconstruction and contribute to name-comparison features.
 - **`weakAlias` and `abbreviation`** are cross-compared against
   candidate names during scoring.
-- **`gender`** acts as a mismatch penalty: disagreement lowers the
-  score.
+- **`gender`** is consumed by a mismatch feature: disagreement lowers
+  the score.
 
-The `directly_scored` flag shown in `yente-cli ref schema NAME` reflects
-the model's per-property flag (with type-level defaulting). Read it as
-"primary scoring input?", not "useful?".
+The practical rule is simple: **send every property you have**. Don't
+filter by the `matchable` flag; the matcher routes each property to
+the right code path on its own.
 
 ## 4. Fetch and adjacency
 

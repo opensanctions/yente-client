@@ -843,7 +843,7 @@ def ref_schema_command(
             [
                 p["name"],
                 p["type"],
-                "✓" if p["directly_scored"] else "",
+                "✓" if p["matchable"] else "",
                 "deprecated" if p["deprecated"] else "",
                 _truncate(p["description"], 50),
             ]
@@ -851,17 +851,18 @@ def ref_schema_command(
         ]
         print_table(
             rows,
-            headers=["property", "type", "scored", "flags", "description"],
+            headers=["property", "type", "matchable", "flags", "description"],
             title=f"{len(properties)} property/properties (own + inherited)",
         )
         typer.echo("")
-        typer.echo("`scored` = directly contributes a match score. Other properties")
-        typer.echo("can still affect results indirectly:")
-        typer.echo("  - name parts (firstName, middleName, lastName, fatherName, ...) get")
-        typer.echo("    folded into the synthesized `name` value")
-        typer.echo("  - weakAlias / abbreviation are cross-compared against candidate names")
-        typer.echo("  - gender acts as a mismatch penalty (lower score on disagreement)")
-        typer.echo("Sending non-`scored` properties is fine — and often helpful.")
+        typer.echo(
+            "`matchable` is the FtM model's per-property flag. It is NOT a 'useful for matching'"
+        )
+        typer.echo("indicator — send every property you have. Non-matchable properties (firstName,")
+        typer.echo(
+            "lastName, weakAlias, gender, ...) feed dedicated matcher features and score just"
+        )
+        typer.echo("as directly as matchable ones — through different code paths.")
 
 
 def _collect_schema_properties(name: str) -> list[dict[str, Any]]:
@@ -871,10 +872,13 @@ def _collect_schema_properties(name: str) -> list[dict[str, Any]]:
     `ref schema` view matches what the codegen would generate. Stub
     properties (reverse edges) are excluded — they're navigation-only.
 
-    The ``directly_scored`` field resolves the property's effective
-    matchability: ``prop.matchable`` when set, else the property's
-    ``type.matchable`` default. See ``yente_matchable_flag`` for why this
-    is not the same as "useful in matching".
+    Each row's ``matchable`` field resolves the FtM model's per-property
+    flag with type-level defaulting (``prop.matchable`` when set, else
+    ``type.matchable``). This flag governs one specific path through the
+    matcher (whether the property value is used as a candidate-filter
+    clause); non-matchable properties still drive scoring through other
+    paths (name reconstruction, alias cross-comparison, dedicated
+    mismatch features). Don't treat the flag as "useful for matching".
     """
     schemata = model["schemata"]
     types = model.get("types", {})
@@ -897,7 +901,7 @@ def _collect_schema_properties(name: str) -> list[dict[str, Any]]:
                     "label": prop_def.get("label", ""),
                     "description": (prop_def.get("description") or "").strip(),
                     "deprecated": bool(prop_def.get("deprecated", False)),
-                    "directly_scored": bool(prop_matchable),
+                    "matchable": bool(prop_matchable),
                     "from_schema": ancestor,
                 }
             )
@@ -1134,17 +1138,16 @@ EXAMPLES:
 OUTPUT (with -f json):
   {name, label, description, matchable, abstract, extends, schemata,
    featured, required, properties: [{name, type, label, description,
-   deprecated, directly_scored, from_schema}, ...]}
+   deprecated, matchable, from_schema}, ...]}
 
 The property list is flat (own + inherited), excluding stub
 (reverse-edge) properties that aren't user-settable.
 
-`directly_scored` (also shown as the `scored` column in the table
-view) marks properties that contribute to a match score as a primary
-matching feature. Properties WITHOUT this flag can still meaningfully
-impact match results: name parts (firstName, lastName, ...) feed into
-a synthesized `name`; weakAlias / abbreviation are cross-compared
-against candidate names; gender acts as a mismatch penalty. Sending
-non-`directly_scored` properties is generally fine — the flag is "is
-this a primary scoring input?", not "is this useful?".
+The per-property `matchable` flag is the FtM model's flag for that
+property — NOT a "useful for matching" indicator. Non-matchable
+properties (firstName, lastName, weakAlias, gender, ...) feed
+dedicated matcher features (name reconstruction, alias
+cross-comparison, mismatch qualifiers) and score just as directly as
+matchable ones, through different code paths. Send every property
+you have.
 """

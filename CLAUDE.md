@@ -69,18 +69,23 @@ them.
   client-side: `Client.match()` raises `ConfigurationError` before the
   round-trip when the entity's schema isn't matchable. The CLI mirrors
   the check in `_build_entity_input`.
-- **Property-level `matchable`** is a "directly scored" signal, **not** a
-  "useful in matching" signal. Properties without it can still
-  meaningfully impact match results via three indirect mechanisms:
+- **Property-level `matchable`** governs one specific routing decision
+  inside the matcher (whether the property's value is used as a
+  candidate-filter clause in the search query). It is **NOT** a
+  "useful for matching" indicator. Non-matchable properties are real
+  scoring inputs; they're routed through dedicated matcher features:
   - **Name reconstruction**: `firstName`, `middleName`, `lastName`,
-    `fatherName`, … fold into the synthesized `name` value.
+    `fatherName`, … feed name-comparison features via name reconstruction.
   - **Cross-comparison**: `weakAlias`, `abbreviation` are compared
     against candidate names during scoring.
-  - **Qualifier features**: `gender` acts as a mismatch penalty.
+  - **Qualifier features**: `gender` is consumed by a mismatch feature.
+- **Use the FtM term `matchable` as-is in docs / CLI / API output.**
+  Don't invent parallel names like `directly_scored`. Don't editorialize
+  about "indirect" impact — the routing distinction is real but
+  non-matchable properties drive scoring just as directly. The actionable
+  rule for users is "send every property you have".
 - **Do not filter, warn on, or discourage non-matchable properties.** The
-  codegen includes every non-stub property. In docs the per-property
-  flag is exposed as `directly_scored` with a legend that calls out the
-  three indirect-impact mechanisms; never reduce it to "matchable: yes/no".
+  codegen includes every non-stub property.
 
 ## Drift-prone facts
 
