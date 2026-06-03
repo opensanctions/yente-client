@@ -50,7 +50,7 @@ _FORMAT_HELP = "Output format. `auto` (default) renders a table on a TTY and JSO
 
 
 def _exit_code_for(exc: YenteError) -> int:
-    """Map a ``YenteError`` to the CLI exit code per §5.4."""
+    """Map a ``YenteError`` to the CLI exit code."""
     if isinstance(exc, TransportError):
         return 4
     if isinstance(exc, (APIError, ConfigurationError)):
@@ -384,8 +384,8 @@ def statements_command(
     deduplicated into the canonical entity.
 
     Use ``--entity-id`` only when you want statements from one specific
-    source: it returns the pre-dedup fragment as that source asserted
-    it. The same person on five sanctions lists has five distinct
+    source: it returns the pre-deduplication fragment as that source
+    asserted it. The same person on five sanctions lists has five distinct
     ``entity_id`` values but one ``canonical_id``.
 
     Available only on the OpenSanctions API. yente does not ship the
@@ -499,7 +499,7 @@ def search_command(
         help="Restrict to dataset(s). Repeatable. Default: `default` (combined dataset).",
     ),
     schema: str | None = typer.Option(
-        None, "--schema", "-s", help="Restrict to one entity type, e.g. `Person`, `Company`."
+        None, "--schema", "-s", help="Restrict to one schema, e.g. `Person`, `Company`."
     ),
     topics: list[str] | None = typer.Option(
         None,
@@ -645,7 +645,7 @@ def match_command(
         None,
         "--algorithm",
         "-a",
-        help='Scoring algorithm. "best" is stable across versions; see `algorithms`.',
+        help='Matching algorithm. "best" is stable across versions; see `algorithms`.',
     ),
     limit: int | None = typer.Option(
         None, "--limit", "-l", help="Max results per query (server default 5)."
@@ -1097,7 +1097,7 @@ _STATEMENTS_EPILOG = """\
 EXAMPLES:
   yente-cli statements -c NK-aU5y... -f json              # all lineage for a canonical entity
   yente-cli statements -c NK-aU5y... --prop alias         # narrow to one property
-  yente-cli statements --entity-id ofac-1234              # one source's fragment (pre-dedup)
+  yente-cli statements --entity-id ofac-1234              # one source's fragment (pre-deduplication)
   yente-cli statements --value "Acme LLC" -f jsonl        # find every claim of a value
 
 CANONICAL VS SOURCE ID:
@@ -1184,12 +1184,13 @@ PROPERTY NAMES:
   `lastName`, `country`, `nationality` — not snake_case.
 
 SCHEMA CHOICE:
-  A parent schema matches all its descendants in a single call.
-  `-s LegalEntity` searches `Person`, `Organization`, `Company`, and
-  `PublicBody` together — use it when input could be either an individual
-  or an organization (e.g. raw payee strings). Pick the most specific
-  schema you can confidently set; the parent fallback is for genuine
-  ambiguity, not laziness.
+  Pick the most specific schema you can confidently set. A parent schema
+  matches all its descendants in one call (`-s LegalEntity` covers
+  `Person`, `Organization`, `Company`, `PublicBody`), but a parent query
+  disables schema-specific scoring — e.g. `birthDate` / `firstName` only
+  score for `Person` — and returns more near-misses. Use `LegalEntity`
+  only for genuine person-or-organization ambiguity (e.g. raw payee
+  strings), not as a default.
 
 OUTPUT (with -f json):
   MatchResponse: {query: {...}, results: [ScoredEntity, ...], total, limit}

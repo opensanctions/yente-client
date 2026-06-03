@@ -1,7 +1,7 @@
 # yente-client
 
 Python SDK for the [OpenSanctions](https://www.opensanctions.org) API and
-self-deployed [yente](https://github.com/opensanctions/yente) instances.
+on-premise [yente](https://github.com/opensanctions/yente) instances.
 
 ## Install
 
@@ -109,15 +109,17 @@ yente-cli ref countries                 # ISO country codes the server speaks
 
 # Discover server state:
 yente-cli status                        # client + server + auth + loaded datasets
-yente-cli catalog                       # full per-source dataset list
+yente-cli datasets                      # full per-source dataset list
 yente-cli algorithms                    # enabled algorithms, default + best
 ```
 
 Output formats: `-f table` (default on TTY), `-f json` (pretty, default when piped),
 `-f jsonl` (one item per line, ideal for `jq` and LLM pipelines).
 
-**`search` vs `match`:** use `match` when you have a known entity to screen
-(name + dob + country); use `search` when you have a name fragment to look up.
+**`search` vs `match`:** use `match` for any matching task, even with partial
+input (a name, name + country, …) — it returns scored, ranked candidates.
+`search` is for user-facing search UIs (a search box or autocomplete a human
+types into), not a fallback for `match` on sparse input.
 
 **Exit codes:**
 - `0` ≥1 result
@@ -142,4 +144,4 @@ Every non-2xx response raises a subclass of `YenteError`:
 - `APIError` (other; carries `.status_code` and `.detail`)
 - `TransportError` (network failure before the request reached the server)
 
-Retries are not built into M2 — failed requests raise; users handle.
+Retries are not built in — failed requests raise; callers handle backoff.

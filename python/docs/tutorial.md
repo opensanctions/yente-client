@@ -116,7 +116,7 @@ response = client.match(query, threshold=0.5)
 
 ### Choosing an algorithm
 
-The server exposes several scoring algorithms. `BEST_ALGORITHM` resolves
+The server exposes several matching algorithms. `BEST_ALGORITHM` resolves
 to whichever the server currently recommends. Pass it for
 forward-compatibility:
 
@@ -147,17 +147,22 @@ When both are supplied, the kwargs win on any field they specify.
 
 ### Querying a parent schema matches descendants too
 
-FtM schemas form an inheritance tree. Querying a parent schema matches
-every matchable descendant in a single call. The most useful parent for
-screening is `LegalEntity`, which covers `Person`, `Organization`,
-`Company`, and `PublicBody` — reach for it when the input could be
-either an individual or an organization (raw payee strings, list
-entries, freeform investigative notes):
+FtM schemas form an inheritance tree, and querying a parent schema matches
+every matchable descendant in a single call. `LegalEntity` is the parent of
+`Person`, `Organization`, `Company`, and `PublicBody`.
+
+**Use the most specific schema you can.** A parent query disables the
+schema-specific scoring features that make matching accurate: `birthDate`
+and `firstName` comparisons only activate for `Person`, vessel-identifier
+matching only for `Vessel`, and so on. A `LegalEntity` query also returns
+more low-confidence near-misses. Reach for `LegalEntity` only when the input
+is genuinely ambiguous between an individual and an organization — raw payee
+strings, unlabeled list entries — not as a default that widens the net:
 
 ```python
 from yente_client import LegalEntity
 
-# Matches Person, Organization, Company, PublicBody candidates.
+# Only when you genuinely can't tell a person from an organization.
 response = client.match(
     LegalEntity(name="Acme Industries"),
     datasets=["sanctions"],
@@ -345,8 +350,9 @@ for stmt in client.statements(canonical_id="NK-aU5ybkbRFJucf8YMwsJvDw").results:
 **Use `canonical_id=` for almost every call.** Pass the ID returned by
 `match` / `search` / `fetch`. It returns every source fragment that was
 deduplicated into the canonical entity — usually what you want when
-investigating a record. `entity_id=` returns only one source's pre-dedup
-fragment, which is useful for source-level audits but is *not* a
+investigating a record. `entity_id=` returns only one source's
+pre-deduplication fragment, which is useful for source-level audits but is
+*not* a
 substitute for `canonical_id`: the same person across five sanctions
 lists has five distinct `entity_id` values and only one `canonical_id`.
 

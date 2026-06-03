@@ -34,7 +34,7 @@ class _CommonFilters(BaseModel):
 
 
 class MatchFilters(_CommonFilters):
-    """Filters accepted by ``client.match()`` / ``match_many()`` / ``match_iter()``."""
+    """Filters accepted by ``client.match()``."""
 
     exclude_entities: list[str] | None = None
 

@@ -16,8 +16,8 @@ def _ensure_list(value: Any) -> Any:
     """Coerce a property value to a list.
 
     Single string → one-element list; list → unchanged; ``None`` → unchanged
-    so Pydantic applies the field's default. Anything else raises — we don't
-    silently accept ints, dicts, or other types as property values.
+    so Pydantic applies the field's default. Anything else raises; ints,
+    dicts, and other types are not accepted as property values.
     """
     if value is None or isinstance(value, list):
         return value
@@ -52,7 +52,7 @@ class _EntityBase(BaseModel):
     schema_: ClassVar[str]
 
     def to_payload(self) -> dict[str, Any]:
-        """Serialise for the ``/match`` wire format.
+        """Serialize for the ``/match`` wire format.
 
         Returns ``{"schema": ..., "properties": {...}}`` with optional ``id``.
         Empty property lists are omitted from ``properties`` so the wire

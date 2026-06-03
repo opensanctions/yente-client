@@ -2,7 +2,7 @@
 
 Loads ``schemas/model.json`` at import time and exposes it directly plus a
 handful of lookup helpers. No Pydantic-typed wrappers — the codegen reads
-``model.json`` directly and users who want introspection get dict access.
+``model.json`` directly and callers who want introspection get dict access.
 
 The on-disk file is the followthemoney release artifact verbatim:
 ``{schemata, types, version}`` at the top level.
@@ -24,9 +24,10 @@ def has_schema(name: str) -> bool:
 def iter_properties(schema: str) -> Iterator[str]:
     """Yield every property name available on ``schema``, including inherited ones.
 
-    ``model.json`` stores own-properties only on each schema definition; we walk
-    the pre-flattened ``schemata`` ancestor list and yield each property name
-    at most once, even if multiple ancestors define a property of the same name.
+    ``model.json`` stores own-properties only on each schema definition; this
+    walks the pre-flattened ``schemata`` ancestor list and yields each property
+    name at most once, even if multiple ancestors define a property of the same
+    name.
     """
     if not has_schema(schema):
         raise KeyError(schema)

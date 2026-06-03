@@ -35,7 +35,7 @@ def validate_app_name(name: str) -> str:
     """Validate a caller-supplied ``app_name`` for inclusion in the User-Agent.
 
     Empty strings are rejected because they'd produce a stray ``;`` in the
-    parenthesised comment. Whitespace / parens / semicolons would break the
+    parenthesized comment. Whitespace / parens / semicolons would break the
     UA grammar and are rejected. Returns the name unchanged on success.
     """
     if not name:
@@ -112,7 +112,7 @@ def prepare_http_kwargs(
             stacklevel=3,
         )
 
-    # Caller's headers go in first; our Authorization / User-Agent win.
+    # Caller's headers go in first; the Authorization / User-Agent set here win.
     merged_headers: dict[str, str] = dict(headers or {})
     if api_key:
         merged_headers["Authorization"] = f"ApiKey {api_key}"
@@ -133,7 +133,7 @@ def prepare_http_kwargs(
 def raise_for_response(response: httpx.Response) -> None:
     """Map a non-2xx ``httpx.Response`` to the right ``APIError`` subclass and raise.
 
-    The ``detail`` field from the JSON body is preferred; we fall back to the
+    The ``detail`` field from the JSON body is preferred, falling back to the
     response body text, then to a generic ``HTTP <status>`` placeholder. A
     Retry-After header on 429 is parsed as a float (delta-seconds); HTTP-date
     formats are ignored for now.

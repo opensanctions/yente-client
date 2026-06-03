@@ -3,7 +3,7 @@
 All client-raised errors inherit from ``YenteError`` so callers can catch
 broadly when they don't care which sub-case fired. ``pydantic.ValidationError``
 is raised separately for input-shape mistakes (unknown kwargs on a per-schema
-entity class, etc.) — see the design doc §4.5.
+entity class, etc.).
 """
 
 from typing import Any

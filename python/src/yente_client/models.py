@@ -1,12 +1,12 @@
 """Pydantic response models for the yente / OpenSanctions API.
 
-These mirror the v1 wire format but are reshaped where v2's planned shape
-differs (notably ``MatchResponse``, which we flatten from v1's
-``responses[<key>]`` envelope). See the design doc §4.3 and §4.8.
+These mirror the wire format, reshaped where a flatter surface reads better —
+notably ``MatchResponse``, flattened from the ``responses[<key>]`` envelope.
 
 ``extra="ignore"`` on every response model means unknown server-side fields
-are silently dropped — the client doesn't break when yente adds a field, but
-users who want it must wait for a SDK update. This is intentional for the MVP.
+are silently dropped, so the client doesn't break when yente adds a field. A
+field the client doesn't model yet becomes available only after a client
+release that adds it.
 """
 
 from __future__ import annotations
@@ -84,9 +84,9 @@ class ScoredEntity(Entity):
 
 
 class MatchResponse(BaseModel):
-    """v2-shaped flat response for ``/match``.
+    """Flat response for ``/match``.
 
-    The v1 wire wraps the result in ``responses[<key>]``; the call layer
+    The wire format wraps the result in ``responses[<key>]``; the call layer
     unwraps that envelope so callers always see a flat object. ``query``
     echoes the input as the server saw it (post-cleaning).
     """
@@ -210,8 +210,8 @@ class DatasetsResponse(BaseModel):
     """Body of ``/catalog``: the list of indexed datasets and their freshness.
 
     Named ``DatasetsResponse`` (not ``CatalogResponse``) because the
-    payload is fundamentally a datasets listing; "catalog" is the wire
-    endpoint name we keep using for the HTTP call.
+    payload is fundamentally a datasets listing; ``catalog`` remains the
+    wire endpoint name for the HTTP call.
     """
 
     model_config = ConfigDict(extra="ignore")

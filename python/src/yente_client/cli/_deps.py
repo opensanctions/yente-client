@@ -1,4 +1,4 @@
-"""Centralised import of CLI-only dependencies.
+"""Centralized import of CLI-only dependencies.
 
 The CLI extra (``pip install yente-client[cli]``) pulls in Typer and Rich.
 Routing every CLI-side import through this module means users who installed

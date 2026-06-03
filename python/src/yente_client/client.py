@@ -29,7 +29,7 @@ from yente_client.models import (
 from yente_client.schemas import is_matchable_schema, matchable_schemata
 
 BEST_ALGORITHM: Final[str] = "best"
-"""Canonical algorithm name resolving to whichever scoring algorithm the
+"""Canonical algorithm name resolving to whichever matching algorithm the
 server currently recommends. Stable across algorithm version bumps — pass
 ``algorithm=BEST_ALGORITHM`` for forward-compatibility."""
 
@@ -51,8 +51,7 @@ class Client:
     """Synchronous client for the yente / OpenSanctions API.
 
     Use as a context manager for deterministic cleanup of the underlying
-    ``httpx.Client``. See the design doc §4.6 for the full constructor
-    contract.
+    ``httpx.Client``.
     """
 
     def __init__(
@@ -175,7 +174,7 @@ class Client:
         **Typically you want ``canonical_id=``**, passing the ID returned
         by :meth:`match` / :meth:`search` / :meth:`fetch`. It returns every
         source fragment that was deduplicated into the canonical entity.
-        ``entity_id=`` returns only one source's pre-dedup fragment —
+        ``entity_id=`` returns only one source's pre-deduplication fragment —
         useful for source-level audits, but the same person across five
         sanctions lists has five distinct ``entity_id`` values and only
         one ``canonical_id``.
@@ -315,7 +314,7 @@ class Client:
         kwargs (``datasets=[...]``, ``schema=``, ``countries=[...]``, …);
         kwargs win on any field they specify. The ``datasets`` filter is
         translated to the v1 wire as ``/search/<first-dataset>`` with the
-        rest passed as repeated ``include_dataset`` query params (§4.8).
+        rest passed as repeated ``include_dataset`` query params.
         """
         f = merge_filters(SearchFilters, filters, filter_kwargs)
         dataset, params = serialise_search_filters(f)
@@ -353,11 +352,8 @@ class Client:
     ) -> MatchResponse:
         """Match an entity against a dataset by example.
 
-        Constructs a single-query payload on the v1 wire (``queries={"q":
-        entity.to_payload()}``) and unwraps the response into a flat
-        :class:`MatchResponse`. The unwrap is the one structural difference
-        from v2's planned shape (§4.8): swap out :func:`unwrap_match_response`
-        when ``/v2/match`` ships.
+        Builds a single-query payload and unwraps the response into a flat
+        :class:`MatchResponse`.
 
         Pass filter fields either via ``filters=MatchFilters(...)`` or as
         kwargs (``datasets=[...]``, ``topics=[...]``, ``exclude_entities=[...]``);
@@ -371,8 +367,8 @@ class Client:
         Raises:
             ConfigurationError: ``entity``'s schema is not a matchable
                 target (e.g. ``Document``, ``Article``). Yente would reject
-                the query with a 4xx; we refuse client-side to give a
-                clearer error and save the round-trip.
+                the query with a 4xx; the client refuses it before the
+                round-trip to give a clearer error.
         """
         _check_matchable_schema(entity)
         f = merge_filters(MatchFilters, filters, filter_kwargs)
