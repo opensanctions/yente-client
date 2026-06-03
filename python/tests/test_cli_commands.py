@@ -24,26 +24,6 @@ _BASE_URL = "http://test.local"
 _BASE_FLAGS = ["--api-key", "test", "--base-url", _BASE_URL]
 
 
-# ---------- healthz ----------
-
-
-def test_healthz_table_output(runner, load_fixture) -> None:
-    with respx.mock(base_url=_BASE_URL) as mock:
-        mock.get("/healthz").mock(return_value=httpx.Response(200, json=load_fixture("status_ok")))
-        result = runner.invoke(app, [*_BASE_FLAGS, "healthz"])
-    assert result.exit_code == 0
-    assert "ok" in result.stdout
-
-
-def test_healthz_json_format(runner, load_fixture) -> None:
-    with respx.mock(base_url=_BASE_URL) as mock:
-        mock.get("/healthz").mock(return_value=httpx.Response(200, json=load_fixture("status_ok")))
-        result = runner.invoke(app, [*_BASE_FLAGS, "healthz", "-f", "json"])
-    assert result.exit_code == 0
-    parsed = json.loads(result.stdout)
-    assert parsed == {"status": "ok"}
-
-
 # ---------- status ----------
 
 
@@ -145,23 +125,23 @@ def test_status_handles_readyz_failure(runner, load_fixture) -> None:
     assert summary["api"]["readiness"]["code"] == 503
 
 
-# ---------- catalog ----------
+# ---------- datasets ----------
 
 
-def test_catalog_table(runner, load_fixture) -> None:
+def test_datasets_table(runner, load_fixture) -> None:
     with respx.mock(base_url=_BASE_URL) as mock:
         mock.get("/catalog").mock(return_value=httpx.Response(200, json=load_fixture("catalog")))
-        result = runner.invoke(app, [*_BASE_FLAGS, "catalog", "-f", "table"])
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "-f", "table"])
     assert result.exit_code == 0
     assert "default" in result.stdout
     assert "us_ofac_sdn" in result.stdout
 
 
-def test_catalog_json(runner, load_fixture) -> None:
+def test_datasets_json(runner, load_fixture) -> None:
     payload = load_fixture("catalog")
     with respx.mock(base_url=_BASE_URL) as mock:
         mock.get("/catalog").mock(return_value=httpx.Response(200, json=payload))
-        result = runner.invoke(app, [*_BASE_FLAGS, "catalog", "-f", "json"])
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "-f", "json"])
     assert result.exit_code == 0
     parsed = json.loads(result.stdout)
     assert "datasets" in parsed

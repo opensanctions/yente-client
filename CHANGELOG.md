@@ -11,7 +11,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Python SDK over the yente / OpenSanctions API, sync and async surfaces:
-  `Client.match()`, `search()`, `fetch()`, `adjacent()`, `catalog()`,
+  `Client.match()`, `search()`, `fetch()`, `adjacent()`, `datasets()`,
   `algorithms()`, `healthz()`, `readyz()`, plus the `AsyncClient`
   equivalents. v2-flat response shape over the v1 wire (one HTTP call
   per `match()`).
@@ -24,8 +24,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (and subtypes `Authentication`, `BadRequest`, `NotFound`, `RateLimit`,
   `Server`), `TransportError`.
 - `yente-cli` command-line tool (ships with the `yente-client[cli]`
-  install extra): `match`, `search`, `fetch`, `catalog`, `algorithms`,
-  `status`, `healthz`, `ref schemas`, `ref schema NAME`, `ref topics`,
+  install extra): `match`, `search`, `fetch`, `datasets`, `algorithms`,
+  `status`, `ref schemas`, `ref schema NAME`, `ref topics`,
   `ref countries`. Designed for LLM-agent automation: workflow blocks,
   per-command worked examples, output-shape documentation, fuzzy
   schema/property suggestions on typos.

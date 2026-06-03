@@ -130,27 +130,6 @@ def _client_version() -> str:
         return "0.0.0+unknown"
 
 
-# ----- health probes -----
-
-
-def healthz_command(
-    ctx: typer.Context,
-    format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
-) -> None:
-    """Probe server liveness.
-
-    Returns ``{"status": "ok"}`` whenever the server process is up. Useful for
-    Kubernetes liveness probes. See ``readyz`` for index readiness, which can
-    fail independently.
-    """
-    with _with_client(ctx) as client:
-        result = client.healthz()
-    if resolve_format(format_) in (Format.JSON, Format.JSONL):
-        print_json(result)
-    else:
-        typer.echo(result.status)
-
-
 # ----- status (the catch-all "is everything wired up?" view) -----
 
 
@@ -164,9 +143,9 @@ def status_command(
     package), the bundled FtM model snapshot, the API URL, the masked API
     key, both liveness and readiness probes (with timing), and the datasets
     the server has actually loaded
-    (``load: true`` entries in the catalog — typically one or two top-level
-    datasets / collections; their members ride along in the index without
-    independent freshness).
+    (``load: true`` entries in the dataset listing — typically one or two
+    top-level datasets / collections; their members ride along in the
+    index without independent freshness).
 
     Use this as the canonical "is everything set up correctly?" command. With
     ``-f json`` the output is parser-friendly for LLM agents.
@@ -182,7 +161,7 @@ def status_command(
 
 
 def _gather_status(config: CliConfig) -> dict[str, Any]:
-    """Probe the server, fetch the catalog, and assemble the summary dict.
+    """Probe the server, fetch the dataset listing, and assemble the summary dict.
 
     Probe failures don't raise — they're reported as ``status="error"`` in
     the relevant field so ``status`` still produces a useful diagnostic when
@@ -193,21 +172,21 @@ def _gather_status(config: CliConfig) -> dict[str, Any]:
     liveness: dict[str, Any] = {"status": "error", "detail": "client not built"}
     readiness: dict[str, Any] = {"status": "error", "detail": "client not built"}
     loaded: list[Dataset] = []
-    catalog_error: str | None = None
+    datasets_error: str | None = None
 
     try:
         with config.make_client() as client:
             liveness = _timed_probe(client, "/healthz")
             readiness = _timed_probe(client, "/readyz")
             try:
-                catalog = client.catalog()
-                loaded = [d for d in catalog.datasets if d.load]
+                listing = client.datasets()
+                loaded = [d for d in listing.datasets if d.load]
             except YenteError as exc:
-                catalog_error = _format_error(exc)
+                datasets_error = _format_error(exc)
     except YenteError as exc:
         # The Client itself couldn't even be used (transport error before any
         # request reaches the server). Fall through with the empty defaults.
-        catalog_error = _format_error(exc)
+        datasets_error = _format_error(exc)
         liveness = _err_dict(exc)
         readiness = _err_dict(exc)
 
@@ -238,8 +217,8 @@ def _gather_status(config: CliConfig) -> dict[str, Any]:
         ],
         "summary": {"total": len(loaded), "current": current, "stale": stale},
     }
-    if catalog_error is not None:
-        summary["catalog_error"] = catalog_error
+    if datasets_error is not None:
+        summary["datasets_error"] = datasets_error
     return summary
 
 
@@ -289,8 +268,8 @@ def _render_status_table(summary: dict[str, Any]) -> None:
 
     loaded = summary["loaded"]
     if not loaded:
-        if summary.get("catalog_error"):
-            typer.echo(f"Loaded: (catalog unavailable — {summary['catalog_error']})")
+        if summary.get("datasets_error"):
+            typer.echo(f"Loaded: (datasets unavailable — {summary['datasets_error']})")
         else:
             typer.echo("Loaded: (none — server has no datasets with load=true)")
         return
@@ -323,36 +302,36 @@ def _format_probe(probe: dict[str, Any]) -> str:
     return f"{status}    ({elapsed} ms)" if elapsed is not None else status
 
 
-# ----- catalog / algorithms -----
+# ----- datasets / algorithms -----
 
 
-def catalog_command(
+def datasets_command(
     ctx: typer.Context,
     current_only: bool = typer.Option(
         False, "--current-only", help="Only show datasets whose index is current."
     ),
     format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
 ) -> None:
-    """Fetch the catalog of indexed datasets and their freshness state.
+    """List the indexed datasets and their freshness state.
 
     Use this to discover what dataset names you can pass to ``-d`` /
     ``--datasets`` on ``search`` / ``match``.
     """
     with _with_client(ctx) as client:
-        catalog = client.catalog()
+        listing = client.datasets()
 
-    datasets = catalog.datasets
+    datasets = listing.datasets
     if current_only:
-        current = set(catalog.current)
+        current = set(listing.current)
         datasets = [d for d in datasets if d.name in current]
 
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
-        print_json(catalog if not current_only else {"datasets": datasets})
+        print_json(listing if not current_only else {"datasets": datasets})
     elif fmt == Format.JSONL:
         print_jsonl(datasets)
     else:
-        current_set = set(catalog.current)
+        current_set = set(listing.current)
         rows = [
             [
                 d.name,
@@ -963,8 +942,7 @@ def _truncate(text: str, max_len: int) -> str:
 def register(app: typer.Typer) -> None:
     """Attach all subcommands to ``app``."""
     app.command("status", epilog=_STATUS_EPILOG)(status_command)
-    app.command("healthz", epilog=_HEALTHZ_EPILOG)(healthz_command)
-    app.command("catalog", epilog=_CATALOG_EPILOG)(catalog_command)
+    app.command("datasets", epilog=_DATASETS_EPILOG)(datasets_command)
     app.command("algorithms", epilog=_ALGORITHMS_EPILOG)(algorithms_command)
     app.command("fetch", epilog=_FETCH_EPILOG)(fetch_command)
     app.command("search", epilog=_SEARCH_EPILOG)(search_command)
@@ -1011,20 +989,15 @@ verifies the API key, base URL, liveness, readiness, and what
 datasets the server is actually indexing. Replaces the older
 `version` and `readyz` subcommands.
 
-The full catalog (every dataset visible to the server, loaded or
-not) is available via `yente-cli catalog`.
+The full dataset listing (every dataset visible to the server, loaded
+or not) is available via `yente-cli datasets`.
 """
 
-_HEALTHZ_EPILOG = """\
-OUTPUT: a `{status: 'ok'}` object on success. For a fuller view of
-the connection (auth, readiness, catalog), use `status`.
-"""
-
-_CATALOG_EPILOG = """\
+_DATASETS_EPILOG = """\
 EXAMPLES:
-  yente-cli catalog                       # human-readable table
-  yente-cli catalog -f json               # full CatalogResponse as JSON
-  yente-cli catalog --current-only        # skip stale-index datasets
+  yente-cli datasets                       # human-readable table
+  yente-cli datasets -f json               # full DatasetsResponse as JSON
+  yente-cli datasets --current-only        # skip stale-index datasets
 
 OUTPUT (with -f json):
   {datasets: [{name, title, version, index_current}, ...],

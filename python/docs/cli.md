@@ -37,10 +37,9 @@ To point at a self-hosted yente, set `YENTE_BASE_URL` or pass
 | `match` | Match a single entity (built from `-p key=value` flags or `--from-file`) against a dataset. The canonical command for any matching task. |
 | `search` | Free-text search across one or more datasets, for backing user-facing search UIs. |
 | `fetch` | Fetch one entity by ID. |
-| `catalog` | List indexed datasets and their freshness. |
+| `datasets` | List indexed datasets and their freshness. |
 | `algorithms` | List enabled matching algorithms and the server defaults. |
 | `status` | Client setup, server health, and loaded datasets, at a glance. |
-| `healthz` | Liveness probe only. |
 | `ref schemas` | List every FollowTheMoney (FtM) schema (offline; uses bundled snapshot). |
 | `ref schema NAME` | Detail view: properties, types, `directly_scored` flag, deprecation. |
 | `ref topics` | The `Topic` enum (`sanction`, `role.pep`, `crime.fraud`, …). |
@@ -63,7 +62,7 @@ Every command takes `-f` / `--format`:
 
 | Code | Meaning |
 |---|---|
-| `0` | Success, at least one result (or any successful response for `fetch` / `catalog`). |
+| `0` | Success, at least one result (or any successful response for `fetch` / `datasets`). |
 | `1` | Success, zero results. Lets shell scripts gate on `match … && action`. |
 | `2` | Usage error: bad flag, unknown schema, malformed `-p key=value`. |
 | `3` | API error: non-2xx response. |

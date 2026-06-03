@@ -26,7 +26,7 @@ from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
     AlgorithmsResponse,
-    CatalogResponse,
+    DatasetsResponse,
     Entity,
     MatchResponse,
     SearchResponse,
@@ -119,11 +119,11 @@ class AsyncClient:
         """Async equivalent of :meth:`yente_client.client.Client.readyz`."""
         return StatusResponse.model_validate(await self._request("GET", "/readyz"))
 
-    # ----- catalog / introspection -----
+    # ----- datasets / introspection -----
 
-    async def catalog(self) -> CatalogResponse:
-        """Async equivalent of :meth:`yente_client.client.Client.catalog`."""
-        return CatalogResponse.model_validate(await self._request("GET", "/catalog"))
+    async def datasets(self) -> DatasetsResponse:
+        """Async equivalent of :meth:`yente_client.client.Client.datasets`."""
+        return DatasetsResponse.model_validate(await self._request("GET", "/catalog"))
 
     async def algorithms(self) -> AlgorithmsResponse:
         """Async equivalent of :meth:`yente_client.client.Client.algorithms`."""

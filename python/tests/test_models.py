@@ -5,7 +5,7 @@ from datetime import datetime
 from yente_client.models import (
     Algorithm,
     AlgorithmsResponse,
-    CatalogResponse,
+    DatasetsResponse,
     Entity,
     MatchResponse,
     ScoredEntity,
@@ -232,8 +232,8 @@ def test_algorithms_response() -> None:
     assert ar.algorithms[1].description is None
 
 
-def test_catalog_response() -> None:
-    cr = CatalogResponse.model_validate(
+def test_datasets_response() -> None:
+    cr = DatasetsResponse.model_validate(
         {
             "datasets": [
                 {"name": "default", "title": "Default Collection"},

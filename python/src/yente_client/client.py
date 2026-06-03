@@ -19,7 +19,7 @@ from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
     AlgorithmsResponse,
-    CatalogResponse,
+    DatasetsResponse,
     Entity,
     MatchResponse,
     SearchResponse,
@@ -135,11 +135,15 @@ class Client:
         """
         return StatusResponse.model_validate(self._request("GET", "/readyz"))
 
-    # ----- catalog / introspection -----
+    # ----- datasets / introspection -----
 
-    def catalog(self) -> CatalogResponse:
-        """Fetch the catalog of indexed datasets and their freshness state."""
-        return CatalogResponse.model_validate(self._request("GET", "/catalog"))
+    def datasets(self) -> DatasetsResponse:
+        """Fetch the indexed datasets and their freshness state.
+
+        Calls the wire endpoint ``GET /catalog``; the SDK surface uses
+        the ``datasets`` name because that's what the response carries.
+        """
+        return DatasetsResponse.model_validate(self._request("GET", "/catalog"))
 
     def algorithms(self) -> AlgorithmsResponse:
         """Fetch the list of enabled matching algorithms and the server's defaults."""

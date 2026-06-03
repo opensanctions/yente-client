@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 from yente_client.entities import Person
 from yente_client.models import (
     AlgorithmsResponse,
-    CatalogResponse,
+    DatasetsResponse,
     MatchResponse,
     SearchResponse,
     StatusResponse,
@@ -32,9 +32,9 @@ def test_healthz_returns_ok(live_client) -> None:
     assert r.status == "ok"
 
 
-def test_catalog_returns_datasets(live_client) -> None:
-    r = live_client.catalog()
-    assert isinstance(r, CatalogResponse)
+def test_datasets_returns_listing(live_client) -> None:
+    r = live_client.datasets()
+    assert isinstance(r, DatasetsResponse)
     assert len(r.datasets) > 0
 
 
@@ -84,8 +84,8 @@ async def test_async_healthz_returns_ok(live_async_client) -> None:
     assert r.status == "ok"
 
 
-def test_cli_healthz_against_live_api() -> None:
-    """End-to-end CLI smoke: `yente-cli healthz` against the real API."""
+def test_cli_status_against_live_api() -> None:
+    """End-to-end CLI smoke: `yente-cli status` against the real API."""
     from yente_client.cli.main import app
 
     key = os.environ.get("OPENSANCTIONS_API_KEY")
@@ -95,8 +95,9 @@ def test_cli_healthz_against_live_api() -> None:
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["--api-key", key, "--base-url", base_url, "healthz", "-f", "json"],
+        ["--api-key", key, "--base-url", base_url, "status", "-f", "json"],
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     parsed = json.loads(result.stdout)
-    assert parsed["status"] == "ok"
+    assert parsed["api"]["liveness"]["status"] == "ok"
+    assert parsed["api"]["url"] == base_url

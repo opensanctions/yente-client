@@ -20,7 +20,7 @@ from yente_client.client import BEST_ALGORITHM
 from yente_client.entities import Person
 from yente_client.exceptions import AuthenticationError, BadRequestError, TransportError
 from yente_client.models import (
-    CatalogResponse,
+    DatasetsResponse,
     Entity,
     MatchResponse,
     SearchResponse,
@@ -72,10 +72,10 @@ async def test_async_healthz(make_async_client, load_fixture) -> None:
     assert r.status == "ok"
 
 
-async def test_async_catalog(make_async_client, load_fixture) -> None:
+async def test_async_datasets(make_async_client, load_fixture) -> None:
     async with make_async_client(handler=_fixed(load_fixture("catalog"))) as c:
-        r = await c.catalog()
-    assert isinstance(r, CatalogResponse)
+        r = await c.datasets()
+    assert isinstance(r, DatasetsResponse)
     assert r.datasets[0].name == "default"
 
 

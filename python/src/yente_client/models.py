@@ -177,7 +177,7 @@ class AlgorithmsResponse(BaseModel):
 
 
 class Dataset(BaseModel):
-    """One dataset entry in ``CatalogResponse.datasets``.
+    """One dataset entry in ``DatasetsResponse.datasets``.
 
     Mirrors a subset of yente's ``YenteDatasetModel`` — the fields most
     callers actually use. Unknown fields are dropped via ``extra="ignore"``.
@@ -206,8 +206,13 @@ class Dataset(BaseModel):
     children: list[str] = Field(default_factory=list)
 
 
-class CatalogResponse(BaseModel):
-    """Body of ``/catalog``: the list of indexed datasets and their freshness."""
+class DatasetsResponse(BaseModel):
+    """Body of ``/catalog``: the list of indexed datasets and their freshness.
+
+    Named ``DatasetsResponse`` (not ``CatalogResponse``) because the
+    payload is fundamentally a datasets listing; "catalog" is the wire
+    endpoint name we keep using for the HTTP call.
+    """
 
     model_config = ConfigDict(extra="ignore")
 

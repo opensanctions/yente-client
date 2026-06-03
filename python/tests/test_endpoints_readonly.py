@@ -1,4 +1,4 @@
-"""Endpoint tests: healthz, readyz, catalog, algorithms, fetch, adjacent."""
+"""Endpoint tests: healthz, readyz, datasets, algorithms, fetch, adjacent."""
 
 from typing import Any
 
@@ -8,7 +8,7 @@ from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
     AlgorithmsResponse,
-    CatalogResponse,
+    DatasetsResponse,
     Entity,
     StatusResponse,
 )
@@ -60,14 +60,14 @@ def test_readyz_hits_readyz_path(make_client) -> None:
     assert seen == ["/readyz"]
 
 
-# ---------- catalog / algorithms ----------
+# ---------- datasets / algorithms ----------
 
 
-def test_catalog_returns_catalog_response(make_client, load_fixture) -> None:
+def test_datasets_returns_datasets_response(make_client, load_fixture) -> None:
     payload = load_fixture("catalog")
     with make_client(handler=_fixed_response(payload)) as c:
-        r = c.catalog()
-    assert isinstance(r, CatalogResponse)
+        r = c.datasets()
+    assert isinstance(r, DatasetsResponse)
     assert r.datasets[0].name == "default"
     assert r.datasets[0].load is True
     assert "default" in r.current
