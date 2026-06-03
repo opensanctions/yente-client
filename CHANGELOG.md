@@ -37,5 +37,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   weakAlias/abbreviation cross-comparison, gender qualifier).
 - Documentation under `python/docs/` (mkdocs + Material theme +
   mkdocstrings): tutorial, CLI overview, auto-extracted API reference.
+- Tutorial and `yente-cli match --help` now explain schema inheritance
+  (e.g. `LegalEntity` covers `Person` + `Organization` + `Company` +
+  `PublicBody` in a single call) and when to prefer the parent schema.
 
 [Unreleased]: https://github.com/opensanctions/yente-client/compare/HEAD

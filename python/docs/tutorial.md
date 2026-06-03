@@ -146,6 +146,35 @@ response = client.match(query, filters=filters)
 When both are supplied, the kwargs win on any field they specify.
 [`MatchFilters`](api/filters.md) lists every available field.
 
+### Querying a parent schema matches descendants too
+
+FtM schemas form an inheritance tree. Querying a parent schema matches
+every matchable descendant: the server expands `schema` to its
+matchable descendant set at query time, and a single `match()` call
+searches the union.
+
+The most useful parent for screening is `LegalEntity`, which sits
+above both `Person` and `Organization` (and therefore `Company`,
+`PublicBody`, …). Reach for it when the input could be either an
+individual or an organization — common with raw payee strings, list
+entries, freeform investigative notes:
+
+```python
+from yente_client import LegalEntity
+
+# Matches Person, Organization, Company, PublicBody candidates.
+response = client.match(
+    LegalEntity(name="Acme Industries"),
+    datasets=["sanctions"],
+)
+```
+
+Use the most specific schema you can confidently set — `Person` when
+you know it's an individual, `Company` when it's a corporation. The
+parent-schema fallback is for genuine ambiguity, not laziness; a
+specific schema gives the matcher access to schema-specific
+properties (e.g. `birthDate` on `Person`) and tighter scoring.
+
 ### Schema-level matchable: the SDK refuses non-matchable schemas
 
 The server refuses `/match` queries against non-matchable schemas

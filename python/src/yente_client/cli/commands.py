@@ -1090,6 +1090,14 @@ PROPERTY NAMES:
   properties a schema accepts. Names are FtM camelCase: `firstName`, `birthDate`,
   `lastName`, `country`, `nationality` — not snake_case.
 
+SCHEMA CHOICE:
+  A parent schema matches all its descendants in a single call.
+  `-s LegalEntity` searches `Person`, `Organization`, `Company`, and
+  `PublicBody` together — use it when input could be either an individual
+  or an organization (e.g. raw payee strings). Pick the most specific
+  schema you can confidently set; the parent fallback is for genuine
+  ambiguity, not laziness.
+
 OUTPUT (with -f json):
   MatchResponse: {query: {...}, results: [ScoredEntity, ...], total, limit}
   Each ScoredEntity: {id, caption, schema, score (0-1), match (bool),
