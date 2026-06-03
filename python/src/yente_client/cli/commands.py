@@ -1097,7 +1097,7 @@ _STATEMENTS_EPILOG = """\
 EXAMPLES:
   yente-cli statements -c NK-aU5y... -f json              # all lineage for a canonical entity
   yente-cli statements -c NK-aU5y... --prop alias         # narrow to one property
-  yente-cli statements --entity-id ofac-1234              # one source's fragment (pre-deduplication)
+  yente-cli statements --entity-id ofac-1234              # source fragment (pre-deduplication)
   yente-cli statements --value "Acme LLC" -f jsonl        # find every claim of a value
 
 CANONICAL VS SOURCE ID:
