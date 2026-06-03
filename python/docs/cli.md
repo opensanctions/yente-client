@@ -27,7 +27,7 @@ Authenticate by exporting your API key (the same one the SDK uses):
 export OPENSANCTIONS_API_KEY=sk_live_…
 ```
 
-To point at a self-hosted yente, set `YENTE_BASE_URL` or pass
+To point at a yente instance, set `YENTE_BASE_URL` or pass
 `--base-url`.
 
 ## The command surface
@@ -38,7 +38,7 @@ To point at a self-hosted yente, set `YENTE_BASE_URL` or pass
 | `search` | Free-text search across one or more datasets, for backing user-facing search UIs. |
 | `fetch` | Fetch one entity by ID. |
 | `datasets` | List indexed datasets and their freshness. |
-| `statements` | Statement-level data lineage (hosted API only). |
+| `statements` | Statement-level data lineage (OpenSanctions API only). |
 | `algorithms` | List enabled matching algorithms and the server defaults. |
 | `status` | Client setup, server health, and loaded datasets, at a glance. |
 | `ref schemas` | List every FollowTheMoney (FtM) schema (offline; uses bundled snapshot). |
@@ -115,5 +115,5 @@ messages on bad schema or property names include fuzzy suggestions
   workflow in depth.
 - [API reference](api/index.md): full signatures of every public symbol.
 - [OpenSanctions docs](https://www.opensanctions.org/docs/) for domain
-  context (sanctions screening, the FtM data model, the hosted-API
+  context (sanctions screening, the FtM data model, the API
   quickstart, the account / API-key page).

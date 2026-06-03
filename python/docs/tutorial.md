@@ -18,17 +18,16 @@ pip install yente-client
 
 Python 3.11+. Runtime dependencies are `pydantic` and `httpx`.
 
-The hosted [OpenSanctions API](https://www.opensanctions.org/account/)
-needs an API key. Get one, then export it:
+The [OpenSanctions API](https://www.opensanctions.org/account/) needs
+an API key. Get one, then export it:
 
 ```bash
 export OPENSANCTIONS_API_KEY=sk_live_…
 ```
 
 A bare `Client()` constructor picks up `OPENSANCTIONS_API_KEY` and
-`YENTE_BASE_URL` from the environment. To target your own self-hosted
-yente instance, set `YENTE_BASE_URL=http://localhost:8000` (or pass
-`base_url=` directly).
+`YENTE_BASE_URL` from the environment. To target a yente instance, set
+`YENTE_BASE_URL=http://localhost:8000` (or pass `base_url=` directly).
 
 ```python
 from yente_client import Client
@@ -327,7 +326,7 @@ The model is a *snapshot*, pinned at SDK-release time. Properties added
 upstream don't appear until the next SDK release. Maintainers run
 `make regen-model` to refresh.
 
-## 9. Statements — lineage and diagnostics (hosted only)
+## 9. Statements — lineage and diagnostics (OpenSanctions API only)
 
 The `/statements` endpoint exposes the atomic claims that compose into
 entities: each row is one `(entity_id, prop, value)` triple plus the
@@ -343,14 +342,14 @@ for stmt in client.statements(canonical_id="NK-aU5ybkbRFJucf8YMwsJvDw").results:
     print(stmt.dataset, stmt.prop, stmt.value, stmt.first_seen)
 ```
 
-Only the hosted OpenSanctions API serves this endpoint — it is backed
-by a Postgres instance that self-hosted yente deployments don't ship.
-Calls against a self-hosted server surface as `NotFoundError`.
+Only the OpenSanctions API serves this endpoint — it is backed by a
+Postgres instance that yente does not ship. Calls against a yente
+instance surface as `NotFoundError`.
 
 ## Where to go next
 
 - [CLI overview](cli.md) — `yente-cli`, agent automations, shell pipelines.
 - [API reference](api/index.md) — full signatures of every public symbol.
 - [OpenSanctions docs](https://www.opensanctions.org/docs/) — domain
-  context: sanctions screening, the FtM data model, the hosted-API
+  context: sanctions screening, the FtM data model, the API
   quickstart, getting an API key.

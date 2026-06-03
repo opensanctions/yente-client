@@ -2,7 +2,7 @@
 
 Uses Typer's ``CliRunner`` for invocation and ``respx`` for HTTP mocking.
 Each test sets ``--api-key`` and ``--base-url`` flags so the missing-key
-warning doesn't fire against the hosted URL default.
+warning doesn't fire against the default OpenSanctions API URL.
 """
 
 import json
@@ -173,8 +173,8 @@ def test_statements_table(runner, load_fixture) -> None:
     assert "us_ofac_sdn" in result.stdout
 
 
-def test_statements_404_message_points_at_hosted_api(runner) -> None:
-    """On a self-hosted yente, /statements returns 404 — the CLI shows the rewrapped detail."""
+def test_statements_404_message_points_at_opensanctions_api(runner) -> None:
+    """On a yente instance, /statements returns 404 — the CLI shows the rewrapped detail."""
     with respx.mock(base_url=_BASE_URL) as mock:
         mock.get("/statements").mock(
             return_value=httpx.Response(404, json={"detail": "Not Found"}),
@@ -182,7 +182,7 @@ def test_statements_404_message_points_at_hosted_api(runner) -> None:
         result = runner.invoke(app, [*_BASE_FLAGS, "statements", "--entity-id", "x"])
     assert result.exit_code == 3  # API error
     combined = result.stdout + result.stderr
-    assert "hosted OpenSanctions API" in combined
+    assert "OpenSanctions API" in combined
 
 
 # ---------- algorithms ----------

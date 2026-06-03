@@ -130,7 +130,7 @@ class AsyncClient:
         """Async equivalent of :meth:`yente_client.client.Client.algorithms`."""
         return AlgorithmsResponse.model_validate(await self._request("GET", "/algorithms"))
 
-    # ----- statements (hosted only) -----
+    # ----- statements (OpenSanctions API only) -----
 
     async def statements(
         self,
@@ -170,9 +170,9 @@ class AsyncClient:
                 status_code=exc.status_code,
                 detail=(
                     "The /statements endpoint is not available on this server. "
-                    "Statement-level access is provided only by the hosted "
-                    "OpenSanctions API; self-hosted yente deployments don't "
-                    "ship the backing Postgres instance and return 404 here."
+                    "Statement-level access is provided only by the OpenSanctions "
+                    "API; yente does not ship the backing Postgres instance and "
+                    "returns 404 here."
                 ),
                 response=exc.response,
             ) from exc

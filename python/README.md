@@ -1,7 +1,7 @@
 # yente-client
 
-Python SDK for the [yente](https://github.com/opensanctions/yente) matching API
-and the hosted [OpenSanctions](https://www.opensanctions.org) API.
+Python SDK for the [OpenSanctions](https://www.opensanctions.org) API and
+self-deployed [yente](https://github.com/opensanctions/yente) instances.
 
 ## Install
 
@@ -30,10 +30,10 @@ with Client(api_key="...", app_name="MyScreeningApp") as c:
         print(match.id, match.properties.get("topics", []))
 ```
 
-The API key for the hosted API can be generated at
+The API key can be generated at
 [opensanctions.org/account](https://www.opensanctions.org/account/). It's
 read in this example from the `OPENSANCTIONS_API_KEY` env var if you skip
-passing `api_key=`. For self-hosted yente, pass `base_url=` (no key needed).
+passing `api_key=`. To target a yente instance, pass `base_url=` (no key needed).
 
 ## Other endpoints
 
@@ -47,7 +47,7 @@ for sanction in entity.properties.get("sanctions", []):
     print(sanction.properties["authority"])
 
 # Operational endpoints
-c.catalog()       # available datasets and freshness
+c.datasets()      # available datasets and freshness
 c.algorithms()    # enabled matching algorithms
 c.healthz()       # liveness
 ```
@@ -76,7 +76,7 @@ Person(notARealProp="X")     # ValidationError — extra="forbid"
 | Kwarg | Default | Notes |
 | --- | --- | --- |
 | `api_key` | `None` | Sent as `Authorization: ApiKey <key>`. |
-| `base_url` | `https://api.opensanctions.org` | Override for self-hosted yente or staging. |
+| `base_url` | `https://api.opensanctions.org` | Override for a yente instance or staging. |
 | `app_name` | `None` | Identifier added to the User-Agent comment. |
 | `user_agent` | `None` | Full override; bypasses the assembled UA. |
 | `timeout` | `30s read, 10s connect` | Pass an `httpx.Timeout(...)` for fine control. |

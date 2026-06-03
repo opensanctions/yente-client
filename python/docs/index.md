@@ -1,9 +1,9 @@
 # yente-client documentation
 
 The yente-client Python SDK and `yente-cli` command-line tool for
-matching entities against the [yente](https://github.com/opensanctions/yente)
-matching API and the hosted [OpenSanctions](https://www.opensanctions.org)
-API.
+matching entities against the [OpenSanctions API](https://www.opensanctions.org)
+and self-deployed [yente](https://github.com/opensanctions/yente)
+instances.
 
 ## Start here
 

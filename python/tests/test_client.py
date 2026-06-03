@@ -84,17 +84,17 @@ def test_api_key_sets_authorization_header() -> None:
         assert c._http.headers["Authorization"] == "ApiKey secret-key"
 
 
-def test_missing_api_key_warns_on_hosted_url() -> None:
+def test_missing_api_key_warns_on_opensanctions_url() -> None:
     with pytest.warns(UserWarning, match="api_key"):
         Client().close()
 
 
-def test_missing_api_key_warns_on_hosted_test_url() -> None:
+def test_missing_api_key_warns_on_opensanctions_test_url() -> None:
     with pytest.warns(UserWarning, match="api_key"):
         Client(base_url="https://api.test.opensanctions.org").close()
 
 
-def test_missing_api_key_does_not_warn_on_self_hosted() -> None:
+def test_missing_api_key_does_not_warn_on_yente_instance() -> None:
     import warnings as _warnings
 
     with _warnings.catch_warnings():

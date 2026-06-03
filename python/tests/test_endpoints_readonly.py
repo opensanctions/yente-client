@@ -83,7 +83,7 @@ def test_algorithms_returns_algorithms_response(make_client, load_fixture) -> No
     assert {a.name for a in r.algorithms} == {"logic-v2", "name-matcher"}
 
 
-# ---------- statements (hosted only) ----------
+# ---------- statements (OpenSanctions API only) ----------
 
 
 def test_statements_returns_statements_response(make_client, load_fixture) -> None:
@@ -110,8 +110,8 @@ def test_statements_returns_statements_response(make_client, load_fixture) -> No
     assert r.results[1].lang is None
 
 
-def test_statements_404_on_selfhosted_yente(make_client) -> None:
-    """Self-hosted yente returns 404; the SDK rewraps with a pointed message."""
+def test_statements_404_on_yente_rewraps_with_pointed_message(make_client) -> None:
+    """A yente instance returns 404; the SDK rewraps with a pointed message."""
     import httpx as _httpx
     import pytest
 
@@ -124,7 +124,7 @@ def test_statements_404_on_selfhosted_yente(make_client) -> None:
         c.statements(entity_id="anything")
     msg = str(exc_info.value)
     assert "/statements endpoint is not available" in msg
-    assert "hosted OpenSanctions API" in msg
+    assert "OpenSanctions API" in msg
     # The original 404 is preserved.
     assert exc_info.value.status_code == 404
 

@@ -75,8 +75,8 @@ def build_user_agent(app_name: str | None = None, override: str | None = None) -
     return f"yente-client/{_client_version()} ({'; '.join(parts)})"
 
 
-def looks_hosted(base_url: str) -> bool:
-    """Return True when ``base_url`` points at the hosted OpenSanctions API."""
+def is_opensanctions_url(base_url: str) -> bool:
+    """Return True when ``base_url`` points at the OpenSanctions API."""
     return any(host in base_url for host in _HOSTED_HOSTS)
 
 
@@ -100,14 +100,14 @@ def prepare_http_kwargs(
     Side effects:
       - Raises ``ConfigurationError`` on an invalid ``app_name``.
       - Emits a one-shot ``UserWarning`` when no ``api_key`` is set and
-        ``base_url`` points at the hosted API.
+        ``base_url`` points at the OpenSanctions API.
     """
     if app_name is not None:
         validate_app_name(app_name)
 
-    if api_key is None and looks_hosted(base_url):
+    if api_key is None and is_opensanctions_url(base_url):
         warnings.warn(
-            "Client constructed against the hosted OpenSanctions API without an "
+            "Client constructed against the OpenSanctions API without an "
             "api_key. Set api_key= or pass OPENSANCTIONS_API_KEY via env.",
             stacklevel=3,
         )

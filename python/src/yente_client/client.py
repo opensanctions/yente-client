@@ -150,7 +150,7 @@ class Client:
         """Fetch the list of enabled matching algorithms and the server's defaults."""
         return AlgorithmsResponse.model_validate(self._request("GET", "/algorithms"))
 
-    # ----- statements (hosted only) -----
+    # ----- statements (OpenSanctions API only) -----
 
     def statements(
         self,
@@ -172,10 +172,10 @@ class Client:
         `statement-based data model <https://www.opensanctions.org/docs/statements/>`_
         for context.
 
-        Only the hosted OpenSanctions API serves this endpoint — it is
-        backed by a Postgres instance that self-hosted yente deployments
-        don't ship. Self-hosted servers return ``404``, which surfaces
-        as :class:`NotFoundError` with a pointed message.
+        Only the OpenSanctions API serves this endpoint — it is backed
+        by a Postgres instance that yente doesn't ship. A yente instance
+        returns ``404``, which surfaces here as :class:`NotFoundError`
+        with a pointed message.
 
         Args:
             dataset: Restrict to statements from this dataset.
@@ -214,9 +214,9 @@ class Client:
                 status_code=exc.status_code,
                 detail=(
                     "The /statements endpoint is not available on this server. "
-                    "Statement-level access is provided only by the hosted "
-                    "OpenSanctions API; self-hosted yente deployments don't "
-                    "ship the backing Postgres instance and return 404 here."
+                    "Statement-level access is provided only by the OpenSanctions "
+                    "API; yente does not ship the backing Postgres instance and "
+                    "returns 404 here."
                 ),
                 response=exc.response,
             ) from exc

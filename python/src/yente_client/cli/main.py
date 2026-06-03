@@ -49,19 +49,19 @@ def _app_callback(
         "--api-key",
         envvar="OPENSANCTIONS_API_KEY",
         show_envvar=True,
-        help="API key for the hosted OpenSanctions API. Falls back to env.",
+        help="API key for the OpenSanctions API. Falls back to env.",
     ),
     base_url: str = typer.Option(
         _DEFAULT_BASE_URL,
         "--base-url",
         envvar="YENTE_BASE_URL",
         show_envvar=True,
-        help="API root. Use to target a self-hosted yente instance.",
+        help="API root. Use to target a yente instance.",
     ),
     app_name: str | None = typer.Option(
         None,
         "--app-name",
-        help="Identifier embedded in the User-Agent. Helpful for hosted-side telemetry.",
+        help="Identifier embedded in the User-Agent. Helpful for server-side telemetry.",
     ),
     user_agent: str | None = typer.Option(
         None,

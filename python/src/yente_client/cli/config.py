@@ -7,7 +7,7 @@ base URL / app identifier.
 
 Client construction is lazy on purpose: commands that don't make HTTP calls
 (``version``, ``ref *``) avoid building a Client (and the "missing api_key"
-warning it would emit against the hosted URL).
+warning it would emit against the OpenSanctions API URL).
 """
 
 from dataclasses import dataclass

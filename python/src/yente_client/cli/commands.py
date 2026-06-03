@@ -361,15 +361,15 @@ def statements_command(
     offset: int = typer.Option(0, "--offset", help="Pagination offset."),
     format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
 ) -> None:
-    """Read raw entity data as statements (hosted-only).
+    """Read raw entity data as statements (OpenSanctions API only).
 
     Statements track lineage: each row records a single
     ``(entity_id, prop, value)`` claim plus the dataset that asserted it
     and when. Useful for diagnostics — finding deduplication issues,
     investigating where a value came from, auditing data quality.
 
-    Available only on the hosted OpenSanctions API. Self-hosted yente
-    deployments don't ship the backing data store and return 404 here.
+    Available only on the OpenSanctions API. yente does not ship the
+    backing data store and returns 404 here.
     """
     with _with_client(ctx) as client:
         response = client.statements(
@@ -1033,7 +1033,7 @@ _STATUS_EPILOG = """\
 EXAMPLES:
   yente-cli status                          # TTY-friendly summary
   yente-cli status -f json                  # parseable summary for agents
-  yente-cli status --base-url http://...    # check a self-hosted yente
+  yente-cli status --base-url http://...    # check a yente instance
 
 OUTPUT (with -f json):
   {
@@ -1089,7 +1089,7 @@ OUTPUT (with -f json):
 EXIT CODES:
   0  ≥1 row returned
   1  zero rows
-  3  API error (incl. 404 on self-hosted yente — the endpoint is hosted-only)
+  3  API error (incl. 404 on yente — the endpoint is OpenSanctions-only)
   4  network/transport error
 
 For background on the statement-based data model see

@@ -5,7 +5,7 @@ Run locally with ``pytest -m live``; CI runs them in a separate job that's
 gated on the secret being available (which excludes PRs from forks).
 
 Kept deliberately small — these are smoke tests, not a comprehensive suite.
-They double as a drift detector for the hosted API's response shapes.
+They double as a drift detector for the OpenSanctions API's response shapes.
 """
 
 import json

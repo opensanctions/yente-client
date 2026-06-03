@@ -14,9 +14,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Client.match()`, `search()`, `fetch()`, `adjacent()`, `datasets()`,
   `algorithms()`, `statements()`, `healthz()`, `readyz()`, plus the
   `AsyncClient` equivalents. v2-flat response shape over the v1 wire
-  (one HTTP call per `match()`). `statements()` is hosted-only;
-  self-hosted yente deployments return 404, which the SDK rewraps with
-  a pointed `NotFoundError` message.
+  (one HTTP call per `match()`). `statements()` is OpenSanctions-API
+  only; yente instances return 404, which the SDK rewraps with a
+  pointed `NotFoundError` message.
 - Per-schema entity input classes generated from a bundled FtM model
   snapshot (`Person`, `Company`, `Vessel`, …), with camelCase fields
   matching the wire format.
