@@ -46,6 +46,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that documents the canonical_id/entity_id structure of entity-typed
   statements and shows forward + reverse graph-traversal patterns.
   The CLI `statements` epilog mirrors the reverse-traversal example.
+- `yente-cli datasets <name>` now accepts an optional positional
+  argument that emits one dataset's full metadata. Fetches the same
+  catalog as the unargumented form and filters client-side; saves a
+  `jq` pipe for the common "what's in this dataset?" lookup. Unknown
+  names get a fuzzy-suggestion error.
 - Per-property matchability surfaces in `ref schema NAME` (table column
   and `-f json` field) under its real name `matchable`, not the
   previously-invented `directly_scored`. Accompanying legend states the

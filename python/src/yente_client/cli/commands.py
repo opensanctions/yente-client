@@ -307,6 +307,10 @@ def _format_probe(probe: dict[str, Any]) -> str:
 
 def datasets_command(
     ctx: typer.Context,
+    name: str | None = typer.Argument(
+        None,
+        help="Optional dataset name. When given, show the full metadata for that dataset.",
+    ),
     current_only: bool = typer.Option(
         False, "--current-only", help="Only show datasets whose index is current."
     ),
@@ -314,11 +318,43 @@ def datasets_command(
 ) -> None:
     """List the indexed datasets and their freshness state.
 
-    Use this to discover what dataset names you can pass to ``-d`` /
-    ``--datasets`` on ``search`` / ``match``.
+    Without an argument, lists every indexed dataset (use ``-d`` / ``--datasets``
+    on ``search`` / ``match`` with these names). With a dataset name, fetches
+    the full catalog and emits just that one entry's metadata — convenient
+    for inspecting versions, freshness, and children of a specific dataset
+    without piping through ``jq``.
     """
     with _with_client(ctx) as client:
         listing = client.datasets()
+
+    if name is not None:
+        match = next((d for d in listing.datasets if d.name == name), None)
+        if match is None:
+            suggestion = difflib.get_close_matches(
+                name, [d.name for d in listing.datasets], n=1, cutoff=0.6
+            )
+            hint = f" Did you mean: {suggestion[0]}?" if suggestion else ""
+            typer.echo(
+                f"error: Unknown dataset {name!r}.{hint} Run `yente-cli datasets` for the list.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        fmt = resolve_format(format_)
+        if fmt in (Format.JSON, Format.JSONL):
+            print_json(match)
+        else:
+            current_set = set(listing.current)
+            rows = [
+                ["name", match.name],
+                ["title", match.title or ""],
+                ["version", match.version or ""],
+                ["index_version", match.index_version or ""],
+                ["current", "yes" if match.name in current_set else "no"],
+                ["load", "yes" if match.load else "no"],
+                ["children", ", ".join(match.children) if match.children else "(none)"],
+            ]
+            print_table(rows, headers=["field", "value"], title=match.name)
+        return
 
     datasets = listing.datasets
     if current_only:
@@ -1082,13 +1118,19 @@ or not) is available via `yente-cli datasets`.
 
 _DATASETS_EPILOG = """\
 EXAMPLES:
-  yente-cli datasets                       # human-readable table
+  yente-cli datasets                       # all datasets, table view
   yente-cli datasets -f json               # full DatasetsResponse as JSON
   yente-cli datasets --current-only        # skip stale-index datasets
+  yente-cli datasets us_ofac_sdn           # full metadata for one dataset
+  yente-cli datasets sanctions -f json     # one dataset, JSON for piping
 
-OUTPUT (with -f json):
+OUTPUT (no argument, with -f json):
   {datasets: [{name, title, version, index_current}, ...],
    current: [str], outdated: [str], index_stale: bool}
+
+OUTPUT (with a dataset name + -f json):
+  Dataset object: {name, title, description, version, index_version,
+                   index_current, load, children, entities_url}
 
 The `name` field is what you pass to `-d` / `--datasets` on match/search.
 """

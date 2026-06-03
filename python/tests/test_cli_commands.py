@@ -148,6 +148,37 @@ def test_datasets_json(runner, load_fixture) -> None:
     assert {d["name"] for d in parsed["datasets"]} >= {"default", "us_ofac_sdn"}
 
 
+def test_datasets_single_json(runner, load_fixture) -> None:
+    """`yente-cli datasets <name>` returns just that one dataset's metadata."""
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/catalog").mock(return_value=httpx.Response(200, json=load_fixture("catalog")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "default", "-f", "json"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["name"] == "default"
+    assert "datasets" not in parsed  # not the wrapping listing
+
+
+def test_datasets_single_table(runner, load_fixture) -> None:
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/catalog").mock(return_value=httpx.Response(200, json=load_fixture("catalog")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "default", "-f", "table"])
+    assert result.exit_code == 0
+    # Field-name labels in the per-dataset table view
+    assert "name" in result.stdout
+    assert "index_version" in result.stdout
+
+
+def test_datasets_unknown_name_suggests_close_match(runner, load_fixture) -> None:
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/catalog").mock(return_value=httpx.Response(200, json=load_fixture("catalog")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "defalt"])
+    assert result.exit_code == 2
+    err = result.stdout + result.stderr
+    assert "Unknown dataset" in err
+    assert "default" in err  # fuzzy suggestion
+
+
 # ---------- statements ----------
 
 
