@@ -4,6 +4,18 @@ Project-specific rules for working in this repo. The user's global
 `~/.claude/CLAUDE.md` still applies — these are extensions or explicit choices
 where this project deviates from defaults.
 
+## Names and identity
+
+Three names diverge, easily conflated:
+
+- **PyPI package:** `yente-client` (kebab). What `pip install` takes.
+- **Python import:** `yente_client` (snake). What `import` takes.
+- **CLI binary:** `yente-cli`. Console-script entry point, shipped by the
+  `yente-client[cli]` install extra.
+- **GitHub repo:** `opensanctions/yente-client`.
+- **User-Agent product token:** `yente-client/<version>`. Stays
+  package-shaped on the wire.
+
 ## Python target
 
 - **Floor: Python 3.11.** Modern syntax is available natively; no compatibility
@@ -32,6 +44,43 @@ where this project deviates from defaults.
   natively at 3.11; adding the future import everywhere causes subtle issues
   with Pydantic eval (we hit one in M2). If a file genuinely needs it, leave
   a comment saying why.
+
+## API surface positioning
+
+Two policies govern how the matching surface is described in docs, CLI
+help, error messages, examples, and onboarding material.
+
+### Search vs match
+
+`/search` is for **end-user search UIs** — autocomplete fields, browse
+pages, search-this-database boxes where a human is typing into the input.
+It returns plain `Entity` objects (no score, no match flag).
+
+**Any matching task uses `/match`, even with partial input** (just a name,
+name + country, etc.). Never frame `search` as a fallback for `match` on
+incomplete data; that sends users to the wrong endpoint and yields
+unscored/unranked results. The CLI's `PICK A COMMAND` block and the
+tutorial's section 5 are the canonical phrasings — match new wording to
+them.
+
+### Matchable flag
+
+- **Schema-level `matchable`** is enforced by the server and preempted
+  client-side: `Client.match()` raises `ConfigurationError` before the
+  round-trip when the entity's schema isn't matchable. The CLI mirrors
+  the check in `_build_entity_input`.
+- **Property-level `matchable`** is a "directly scored" signal, **not** a
+  "useful in matching" signal. Properties without it can still
+  meaningfully impact match results via three indirect mechanisms:
+  - **Name reconstruction**: `firstName`, `middleName`, `lastName`,
+    `fatherName`, … fold into the synthesized `name` value.
+  - **Cross-comparison**: `weakAlias`, `abbreviation` are compared
+    against candidate names during scoring.
+  - **Qualifier features**: `gender` acts as a mismatch penalty.
+- **Do not filter, warn on, or discourage non-matchable properties.** The
+  codegen includes every non-stub property. In docs the per-property
+  flag is exposed as `directly_scored` with a legend that calls out the
+  three indirect-impact mechanisms; never reduce it to "matchable: yes/no".
 
 ## Drift-prone facts
 
@@ -142,22 +191,64 @@ spend effort on the public surface.
 ## Codegen
 
 - `scripts/regen_model.py` fetches the FtM model from
-  `data.opensanctions.org/meta/model.json`, writes `model/model.json`, copies
-  to the package, renders Jinja templates, and runs `ruff format` as a
-  postprocess.
+  `https://github.com/opensanctions/followthemoney/releases/latest/download/model.json`,
+  writes `model/model.json`, copies the snapshot to the package, renders Jinja
+  templates, and runs `ruff format` as a postprocess.
+- The payload is the model itself at the top level: `{schemata, types, version}`.
+  `version` is the followthemoney semver (e.g. `"4.8.4"`) and surfaces in
+  `yente-cli status` as the bundled-model identifier.
 - Determinism rules: schemas alphabetical, properties alphabetical, JSON
   written with `sort_keys=True`, compact separators, trailing newline.
 - CI runs `regen_model.py --check --skip-fetch` to detect drift between the
   templates and the committed generated files.
 - **Never hand-edit generated files.** Update the template, run regen, commit.
 
+## Documentation
+
+- Lives under `python/docs/`, built with **mkdocs + mkdocs-material +
+  mkdocstrings**.
+- Three hand-written pages: `index.md`, `tutorial.md`, `cli.md`. They are
+  the only prose pages — keep additions inside this small set unless the
+  surface justifies a new file.
+- The `api/` tree is a set of thin `:::`-directive stubs; mkdocstrings
+  expands them at build time from public docstrings. Updating a docstring
+  updates the API reference; no separate regeneration step.
+- Prose follows the FollowTheMoney styleguide at
+  `/home/pudo/code/followthemoney/docs/styleguide.md` — applies to both
+  these pages and any future doc work.
+- `make docs` builds, `make docs-serve` runs the dev server, `make docs-check`
+  builds with `--strict` (mirrored in CI; a broken link or unresolved
+  reference fails the build).
+- Build output goes to `python/site/` and is gitignored.
+
+## Releasing
+
+- Version is bumped with **`bump2version`** (config at `.bumpversion.cfg`,
+  pinned to `1.0.1`). Run from the repo root:
+
+      bump2version --verbose minor   # or patch / major
+
+  This edits `python/pyproject.toml`, commits, and tags `vX.Y.Z`.
+- Pushing the tag triggers `.github/workflows/release.yml`: full matrix
+  validation, tag-matches-version assertion, wheel + sdist build, install
+  smoke against a clean venv, then PyPI publish via OIDC trusted publishing
+  with PEP 740 attestations. A GitHub Release is created with the
+  `[Unreleased]` section of `CHANGELOG.md` as the notes.
+- `CHANGELOG.md` follows Keep-a-Changelog. PRs are nudged toward updating
+  `[Unreleased]` via an advisory CI step (`scripts/check_changelog.py`);
+  put `[skip changelog]` in the PR body for genuinely user-invisible
+  changes.
+- One-time PyPI setup (documented inline at the top of `release.yml`):
+  configure a Trusted Publisher for the `release.yml` workflow with
+  environment `pypi`.
+
 ## Working in this repo
 
 - Project-local venv at `python/.venv/`. System Python 3.14 lacks
   `ensurepip`, so we create it via `uv venv` and install via
   `uv pip install --python python/.venv/bin/python -e python[dev]`.
-- `make setup` / `make regen-model` / `make regen-model-check` / `make test` /
-  `make lint`. CI runs the underlying commands directly.
+- Make targets: `setup`, `regen-model`, `regen-model-check`, `test`, `lint`,
+  `docs`, `docs-serve`, `docs-check`. CI runs the underlying commands directly.
 - `.env` at repo root (gitignored) carries `OPENSANCTIONS_API_KEY` and
   `YENTE_BASE_URL`. Conftest loads it for local convenience.
 - Don't commit secrets. Don't push without explicit user direction (per the
