@@ -5,6 +5,8 @@ from datetime import datetime
 from yente_client.models import (
     Algorithm,
     AlgorithmsResponse,
+    DataCoverage,
+    DataPublisher,
     DatasetsResponse,
     Entity,
     MatchResponse,
@@ -246,6 +248,63 @@ def test_datasets_response() -> None:
     )
     assert len(cr.datasets) == 2
     assert cr.datasets[1].version == "2024-01-15"
+
+
+def test_dataset_expanded_metadata() -> None:
+    """Descriptive scalars plus the coverage/publisher nested models parse."""
+    cr = DatasetsResponse.model_validate(
+        {
+            "datasets": [
+                {
+                    "name": "default",
+                    "title": "Default Collection",
+                    "summary": "Combined.",
+                    "category": "collection",
+                    "tags": ["sanctions", "peps"],
+                    "entity_count": 1234567,
+                    "thing_count": 987654,
+                    "updated_at": "2026-05-30T08:15:00Z",
+                    "last_export": "2026-05-30T09:00:00Z",
+                    "coverage": {
+                        "start": "2015",
+                        "end": "2026",
+                        "countries": ["us", "gb"],
+                        "frequency": "daily",
+                    },
+                    "publisher": {
+                        "name": "OpenSanctions",
+                        "country": "zz",
+                        "country_label": "Global",
+                        "official": False,
+                    },
+                    "deprecated": False,
+                }
+            ],
+            "current": ["default"],
+        }
+    )
+    ds = cr.datasets[0]
+    assert ds.entity_count == 1234567
+    assert ds.tags == ["sanctions", "peps"]
+    assert isinstance(ds.updated_at, datetime)
+    assert isinstance(ds.coverage, DataCoverage)
+    assert ds.coverage.countries == ["us", "gb"]
+    assert isinstance(ds.publisher, DataPublisher)
+    assert ds.publisher.country_label == "Global"
+
+
+def test_dataset_metadata_defaults_when_absent() -> None:
+    """A bare source entry leaves the descriptive fields at their defaults."""
+    cr = DatasetsResponse.model_validate(
+        {"datasets": [{"name": "us_ofac_sdn", "title": "OFAC SDN"}]}
+    )
+    ds = cr.datasets[0]
+    assert ds.summary is None
+    assert ds.entity_count is None
+    assert ds.coverage is None
+    assert ds.publisher is None
+    assert ds.tags == []
+    assert ds.deprecated is False
 
 
 def test_total_spec_relation_literal() -> None:
