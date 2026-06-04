@@ -176,6 +176,43 @@ class AlgorithmsResponse(BaseModel):
     best: str
 
 
+class DataPublisher(BaseModel):
+    """Who publishes a dataset's source data.
+
+    Lives under ``Dataset.publisher``. For OpenSanctions source datasets this
+    is the upstream authority (a sanctions body, registry, court); ``official``
+    distinguishes a government/primary source from an aggregator.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    url: str | None = None
+    acronym: str | None = None
+    description: str | None = None
+    country: str | None = None
+    country_label: str | None = None
+    official: bool | None = None
+
+
+class DataCoverage(BaseModel):
+    """The temporal and geographic extent a dataset claims to cover.
+
+    Lives under ``Dataset.coverage``. ``start`` / ``end`` are partial dates
+    (``"2020"``, ``"2020-06"``, or a full ISO date) so they stay strings here
+    rather than parsed datetimes. ``frequency`` is the update cadence and is
+    ``"unknown"`` when the publisher hasn't declared one.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    start: str | None = None
+    end: str | None = None
+    countries: list[str] = Field(default_factory=list)
+    frequency: str | None = None
+    schedule: str | None = None
+
+
 class Dataset(BaseModel):
     """One dataset entry in ``DatasetsResponse.datasets``.
 
@@ -190,20 +227,35 @@ class Dataset(BaseModel):
     entries they reflect upstream state, not what's queryable here.
 
     ``children`` is non-empty when the dataset is a *collection* — a grouping
-    that aggregates other datasets.
+    that aggregates other datasets. The descriptive fields (``summary``,
+    ``entity_count``, ``coverage``, ``publisher``, …) are populated for source
+    datasets and collections alike, but a given server only fills in what its
+    upstream metadata carries — expect most to be ``None`` on bare entries.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     name: str
     title: str | None = None
+    summary: str | None = None
     description: str | None = None
+    url: str | None = None
     version: str | None = None
     entities_url: str | None = None
+    category: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    entity_count: int | None = None
+    thing_count: int | None = None
+    updated_at: datetime | None = None
+    last_export: datetime | None = None
+    coverage: DataCoverage | None = None
+    publisher: DataPublisher | None = None
     load: bool = False
     index_current: bool | None = None
     index_version: str | None = None
     children: list[str] = Field(default_factory=list)
+    deprecated: bool = False
+    deprecation: str | None = None
 
 
 class DatasetsResponse(BaseModel):

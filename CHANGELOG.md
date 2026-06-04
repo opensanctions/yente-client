@@ -51,6 +51,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   catalog as the unargumented form and filters client-side; saves a
   `jq` pipe for the common "what's in this dataset?" lookup. Unknown
   names get a fuzzy-suggestion error.
+- Expanded dataset metadata: the `Dataset` model now carries `summary`,
+  `url`, `category`, `tags`, `entity_count`, `thing_count`, `updated_at`,
+  `last_export`, `deprecated`/`deprecation`, plus nested `coverage`
+  (`DataCoverage`) and `publisher` (`DataPublisher`) objects. The
+  `yente-cli datasets <name>` view renders these — appending each row
+  only when the entry carries it, so sparse source datasets stay compact
+  while the indexed collection shows its full metadata.
 - Per-property matchability surfaces in `ref schema NAME` (table column
   and `-f json` field) under its real name `matchable`, not the
   previously-invented `directly_scored`. Accompanying legend states the

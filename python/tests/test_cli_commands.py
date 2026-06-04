@@ -6,6 +6,7 @@ warning doesn't fire against the default OpenSanctions API URL.
 """
 
 import json
+import re
 
 import httpx
 import pytest
@@ -167,6 +168,50 @@ def test_datasets_single_table(runner, load_fixture) -> None:
     # Field-name labels in the per-dataset table view
     assert "name" in result.stdout
     assert "index_version" in result.stdout
+    # Expanded descriptive metadata: scalars plus the coverage/publisher rows.
+    assert "entity_count" in result.stdout
+    assert "summary" in result.stdout
+    assert "coverage" in result.stdout
+    assert "publisher" in result.stdout
+    assert "OpenSanctions" in result.stdout
+
+
+def test_datasets_single_table_omits_absent_fields(runner, load_fixture) -> None:
+    """A sparse source dataset shows core rows but not the rich-field rows."""
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/catalog").mock(return_value=httpx.Response(200, json=load_fixture("catalog")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "sanctions", "-f", "table"])
+    assert result.exit_code == 0
+    assert "index_version" in result.stdout  # core field still present
+    assert "coverage" not in result.stdout  # not carried on this entry
+    assert "publisher" not in result.stdout
+
+
+def test_datasets_single_table_strips_summary_whitespace(runner, load_fixture) -> None:
+    """A trailing newline in `summary` must not render as a phantom blank row.
+
+    The fixture's `us_ofac_sdn` summary ends with `\\n`; without `.strip()`
+    Rich emits a body row whose *both* cells are empty. Wrapped long values
+    (e.g. the publisher line) leave text in the value cell, so an all-empty
+    body row uniquely signals the unstripped-newline bug.
+    """
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/catalog").mock(return_value=httpx.Response(200, json=load_fixture("catalog")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "us_ofac_sdn", "-f", "table"])
+    assert result.exit_code == 0
+    assert "The primary US sanctions list." in result.stdout
+    empty_row = re.compile(r"^│\s+│\s+│$")
+    assert not any(empty_row.match(line) for line in result.stdout.splitlines())
+
+
+def test_datasets_single_table_shows_deprecation(runner, load_fixture) -> None:
+    with respx.mock(base_url=_BASE_URL) as mock:
+        mock.get("/catalog").mock(return_value=httpx.Response(200, json=load_fixture("catalog")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "datasets", "eu_retired_list", "-f", "table"])
+    assert result.exit_code == 0
+    assert "deprecated" in result.stdout
+    assert "Superseded" in result.stdout
+    assert "children" not in result.stdout  # childless entry omits the row
 
 
 def test_datasets_unknown_name_suggests_close_match(runner, load_fixture) -> None:

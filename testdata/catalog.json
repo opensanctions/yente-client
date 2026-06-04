@@ -3,8 +3,29 @@
     {
       "name": "default",
       "title": "Default Collection",
+      "summary": "All entities of interest, combined.",
       "description": "Combined dataset",
+      "url": "https://www.opensanctions.org/datasets/default/",
       "version": "20260530",
+      "category": "collection",
+      "tags": ["sanctions", "peps"],
+      "entity_count": 1234567,
+      "thing_count": 987654,
+      "updated_at": "2026-05-30T08:15:00Z",
+      "last_export": "2026-05-30T09:00:00Z",
+      "coverage": {
+        "start": "2015",
+        "end": "2026",
+        "countries": ["us", "gb", "de"],
+        "frequency": "daily"
+      },
+      "publisher": {
+        "name": "OpenSanctions",
+        "url": "https://www.opensanctions.org",
+        "country": "zz",
+        "country_label": "Global",
+        "official": false
+      },
       "entities_url": "https://data.opensanctions.org/datasets/20260530/default/entities.ftm.json",
       "load": true,
       "index_current": true,
@@ -14,7 +35,21 @@
     {
       "name": "us_ofac_sdn",
       "title": "US OFAC Specially Designated Nationals",
+      "summary": "The primary US sanctions list.\n",
       "version": "20260530",
+      "category": "sanctions",
+      "entity_count": 12000,
+      "coverage": {
+        "countries": ["us"],
+        "frequency": "daily"
+      },
+      "publisher": {
+        "name": "Office of Foreign Assets Control",
+        "acronym": "OFAC",
+        "country": "us",
+        "country_label": "United States",
+        "official": true
+      },
       "load": false,
       "index_current": true
     },
@@ -25,6 +60,15 @@
       "load": false,
       "index_current": true,
       "children": ["us_ofac_sdn"]
+    },
+    {
+      "name": "eu_retired_list",
+      "title": "Retired EU List",
+      "version": "20240101",
+      "load": false,
+      "index_current": false,
+      "deprecated": true,
+      "deprecation": "Superseded by eu_fsf; will be removed."
     }
   ],
   "current": ["default", "us_ofac_sdn", "sanctions"],

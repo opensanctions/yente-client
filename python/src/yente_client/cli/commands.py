@@ -34,7 +34,7 @@ from yente_client.exceptions import (
     TransportError,
     YenteError,
 )
-from yente_client.models import Dataset, Entity
+from yente_client.models import DataCoverage, DataPublisher, Dataset, Entity
 from yente_client.schemas import (
     has_schema,
     is_matchable_schema,
@@ -305,6 +305,30 @@ def _format_probe(probe: dict[str, Any]) -> str:
 # ----- datasets / algorithms -----
 
 
+def _format_coverage(c: DataCoverage) -> str:
+    """Summarise a dataset's coverage as one line for the metadata table."""
+    parts: list[str] = []
+    if c.start or c.end:
+        parts.append(f"{c.start or '?'} – {c.end or 'now'}")
+    if c.countries:
+        n = len(c.countries)
+        parts.append(f"{n} country" if n == 1 else f"{n} countries")
+    if c.frequency and c.frequency != "unknown":
+        parts.append(f"updated {c.frequency}")
+    return ", ".join(parts) or "(none)"
+
+
+def _format_publisher(p: DataPublisher) -> str:
+    """Summarise a dataset's publisher as one line for the metadata table."""
+    label = p.name
+    location = p.country_label or p.country
+    if location:
+        label = f"{label} ({location})"
+    if p.official:
+        label = f"{label} — official source"
+    return label
+
+
 def datasets_command(
     ctx: typer.Context,
     name: str | None = typer.Argument(
@@ -344,6 +368,10 @@ def datasets_command(
             print_json(match)
         else:
             current_set = set(listing.current)
+            # Core identity/freshness fields are always shown; the richer
+            # descriptive fields are appended only when the entry carries them,
+            # so sparse source datasets stay compact while the indexed
+            # collection renders its full metadata.
             rows = [
                 ["name", match.name],
                 ["title", match.title or ""],
@@ -351,8 +379,31 @@ def datasets_command(
                 ["index_version", match.index_version or ""],
                 ["current", "yes" if match.name in current_set else "no"],
                 ["load", "yes" if match.load else "no"],
-                ["children", ", ".join(match.children) if match.children else "(none)"],
             ]
+            if match.summary:
+                rows.append(["summary", match.summary.strip()])
+            if match.category:
+                rows.append(["category", match.category])
+            if match.entity_count is not None:
+                rows.append(["entity_count", f"{match.entity_count:,}"])
+            if match.thing_count is not None:
+                rows.append(["thing_count", f"{match.thing_count:,}"])
+            if match.coverage is not None:
+                rows.append(["coverage", _format_coverage(match.coverage)])
+            if match.publisher is not None:
+                rows.append(["publisher", _format_publisher(match.publisher)])
+            if match.updated_at is not None:
+                rows.append(["updated_at", match.updated_at.date().isoformat()])
+            if match.last_export is not None:
+                rows.append(["last_export", match.last_export.date().isoformat()])
+            if match.url:
+                rows.append(["url", match.url])
+            if match.tags:
+                rows.append(["tags", ", ".join(match.tags)])
+            if match.children:
+                rows.append(["children", ", ".join(match.children)])
+            if match.deprecated:
+                rows.append(["deprecated", match.deprecation or "yes"])
             print_table(rows, headers=["field", "value"], title=match.name)
         return
 
