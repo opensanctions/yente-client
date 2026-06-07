@@ -1,9 +1,9 @@
 # Dependabot configuration.
 #
-# Three ecosystems watched:
+# Two ecosystems watched:
 #  - pip (Python deps declared in python/pyproject.toml)
 #  - github-actions (the workflows themselves)
-#  - npm (TS SDK, lit so dependabot picks it up the moment M6 lands)
+# A third (npm, for the TS SDK) is stubbed out below until M6 lands.
 #
 # Weekly cadence on Monday morning UTC. Dev/test/docs deps are grouped
 # so we get one PR per group instead of one per package — easier to
@@ -56,16 +56,16 @@ updates:
       - dependencies
       - ci
 
-  - package-ecosystem: npm
-    directory: /typescript
-    schedule:
-      interval: weekly
-      day: monday
-      time: "07:00"
-      timezone: Etc/UTC
-    labels:
-      - dependencies
-      - typescript
-    # The /typescript directory doesn't exist yet (M6). When it lands,
-    # this entry activates with no further config changes; until then
-    # dependabot just logs that the path is missing and skips it.
+  # Disabled until the TS SDK (M6) ships a real package.json under
+  # /typescript. The directory is a bare src/test skeleton today, so
+  # dependabot has nothing to resolve. Uncomment when M6 lands.
+  # - package-ecosystem: npm
+  #   directory: /typescript
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #     time: "07:00"
+  #     timezone: Etc/UTC
+  #   labels:
+  #     - dependencies
+  #     - typescript
