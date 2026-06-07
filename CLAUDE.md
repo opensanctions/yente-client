@@ -208,6 +208,28 @@ spend effort on the public surface.
   templates and the committed generated files.
 - **Never hand-edit generated files.** Update the template, run regen, commit.
 
+### Upgrading the bundled FtM model
+
+`regen_model.py` (no flags) follows `latest/download`, so a plain regen pulls
+whatever FtM release is current. To bump the bundled snapshot:
+
+```bash
+# 1. Fetch latest + regenerate (model.json, package snapshot, _literals.py,
+#    _generated.py, entities/__init__.py). make regen-model wraps this.
+make regen-model
+
+# 2. Confirm the new bundled version, then verify nothing drifted / broke.
+python scripts/regen_model.py --check --skip-fetch   # or: make regen-model-check
+cd python && ruff check . && ruff format --check . && mypy && pytest -m "not live"
+
+# 3. Eyeball the diff — model upgrades are usually additive (new schemas,
+#    properties, topic/gender values). Removals are breaking; flag them.
+git diff --stat
+```
+
+Note the FtM version surfaces in `yente-cli status`; a bump is user-visible and
+warrants a `CHANGELOG.md` line.
+
 ## Documentation
 
 - Lives under `python/docs/`, built with **mkdocs + mkdocs-material +

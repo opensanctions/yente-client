@@ -19,7 +19,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pointed `NotFoundError` message.
 - Per-schema entity input classes generated from a bundled FtM model
   snapshot (`Person`, `Company`, `Vessel`, …), with camelCase fields
-  matching the wire format.
+  matching the wire format. Bundled model pinned to followthemoney
+  v4.9.0.
 - `MatchFilters` / `SearchFilters` for dataset / topic / schema /
   country narrowing.
 - `YenteError` exception tree: `ConfigurationError`, `APIError`
