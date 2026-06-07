@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yente-client"
-version = "0.0.1"
+version = "0.1.0"
 description = "Client SDK for the yente / OpenSanctions matching API."
 readme = "README.md"
 license = "MIT"
