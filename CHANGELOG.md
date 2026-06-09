@@ -8,66 +8,51 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-07
+
+First public release of the `yente-client` Python SDK and the `yente-cli`
+command-line tool.
+
 ### Added
 
-- Python SDK over the yente / OpenSanctions API, sync and async surfaces:
-  `Client.match()`, `search()`, `fetch()`, `adjacent()`, `datasets()`,
-  `algorithms()`, `statements()`, `healthz()`, `readyz()`, plus the
-  `AsyncClient` equivalents. v2-flat response shape over the v1 wire
-  (one HTTP call per `match()`). `statements()` is OpenSanctions-API
-  only; yente instances return 404, which the SDK rewraps with a
-  pointed `NotFoundError` message.
-- Per-schema entity input classes generated from a bundled FtM model
-  snapshot (`Person`, `Company`, `Vessel`, …), with camelCase fields
-  matching the wire format. Bundled model pinned to followthemoney
-  v4.9.0.
-- `MatchFilters` / `SearchFilters` for dataset / topic / schema /
+- **Python SDK** over the yente / OpenSanctions matching API, with parallel
+  sync (`Client`) and async (`AsyncClient`) surfaces:
+  `match()`, `search()`, `fetch()`, `adjacent()`, `datasets()`,
+  `algorithms()`, `statements()`, `healthz()`, `readyz()`. A v2-flat
+  response shape over the v1 wire (one HTTP call per `match()`).
+  `statements()` is OpenSanctions-API only; yente instances raise a
+  pointed `NotFoundError`.
+- **Per-schema entity input classes** (`Person`, `Company`, `Vessel`, …),
+  generated from a bundled followthemoney model snapshot, with camelCase
+  fields matching the wire format. Bundled model: followthemoney v4.9.0.
+- **`MatchFilters` / `SearchFilters`** for dataset / topic / schema /
   country narrowing.
-- `YenteError` exception tree: `ConfigurationError`, `APIError`
-  (and subtypes `Authentication`, `BadRequest`, `NotFound`, `RateLimit`,
-  `Server`), `TransportError`.
-- `yente-cli` command-line tool (ships with the `yente-client[cli]`
-  install extra): `match`, `search`, `fetch`, `datasets`, `statements`,
-  `algorithms`, `status`, `ref schemas`, `ref schema NAME`, `ref topics`,
-  `ref countries`. Designed for LLM-agent automation: workflow blocks,
-  per-command worked examples, output-shape documentation, fuzzy
-  schema/property suggestions on typos.
-- Schema-level matchable enforcement: `Client.match()` raises
-  `ConfigurationError` client-side when the target schema isn't
-  matchable, preempting the server-side 4xx.
-- `ref schema NAME` shows a `directly_scored` column with a legend
-  explaining the three indirect-impact mechanisms (name reconstruction,
-  weakAlias/abbreviation cross-comparison, gender qualifier).
-- Documentation under `python/docs/` (mkdocs + Material theme +
-  mkdocstrings): tutorial, CLI overview, auto-extracted API reference.
-- Tutorial and `yente-cli match --help` now explain schema inheritance
-  (e.g. `LegalEntity` covers `Person` + `Organization` + `Company` +
-  `PublicBody` in a single call) and when to prefer the parent schema.
-- Tutorial section 9 gains a "Following entity references" subsection
-  that documents the canonical_id/entity_id structure of entity-typed
-  statements and shows forward + reverse graph-traversal patterns.
-  The CLI `statements` epilog mirrors the reverse-traversal example.
-- `yente-cli datasets <name>` now accepts an optional positional
-  argument that emits one dataset's full metadata. Fetches the same
-  catalog as the unargumented form and filters client-side; saves a
-  `jq` pipe for the common "what's in this dataset?" lookup. Unknown
-  names get a fuzzy-suggestion error.
-- Expanded dataset metadata: the `Dataset` model now carries `summary`,
-  `url`, `category`, `tags`, `entity_count`, `thing_count`, `updated_at`,
-  `last_export`, `deprecated`/`deprecation`, plus nested `coverage`
-  (`DataCoverage`) and `publisher` (`DataPublisher`) objects. The
-  `yente-cli datasets <name>` view renders these — appending each row
-  only when the entry carries it, so sparse source datasets stay compact
-  while the indexed collection shows its full metadata.
-- Per-property matchability surfaces in `ref schema NAME` (table column
-  and `-f json` field) under its real name `matchable`, not the
-  previously-invented `directly_scored`. Accompanying legend states the
-  flag is a routing detail inside the matcher, not a "useful for
-  matching" indicator — non-matchable properties (`firstName`,
-  `weakAlias`, `gender`, …) are real scoring inputs.
-- Tutorial and CLI overview trimmed: the matchable-flag subsections,
-  CLI-vs-SDK comparison, and agent-help enumeration compress to
-  one-liners (full nuance lives in `--help`, the `ref schema` legend,
-  and the API reference).
+- **Schema-level matchable enforcement**: `Client.match()` raises
+  `ConfigurationError` client-side when the target schema isn't matchable,
+  preempting the server-side 4xx.
+- **Expanded `Dataset` metadata**: `summary`, `url`, `category`, `tags`,
+  `entity_count`, `thing_count`, `updated_at`, `last_export`,
+  `deprecated`/`deprecation`, plus nested `coverage` (`DataCoverage`) and
+  `publisher` (`DataPublisher`) objects.
+- **`YenteError` exception tree**: `ConfigurationError`, `APIError`
+  (subtypes `Authentication`, `BadRequest`, `NotFound`, `RateLimit`,
+  `Server`), and `TransportError`.
+- **`yente-cli` command-line tool** (ships with the `yente-client[cli]`
+  extra): `match`, `search`, `fetch`, `datasets [NAME]`, `statements`,
+  `algorithms`, `status`, and the `ref` subcommands (`schemas`,
+  `schema NAME`, `topics`, `countries`). Built for LLM-agent automation:
+  workflow blocks, per-command worked examples, output-shape documentation,
+  and fuzzy schema/property suggestions on typos. `ref schema NAME` surfaces
+  each property's `matchable` flag (table column and `-f json` field) with a
+  legend clarifying it's a matcher routing detail, not a "useful for
+  matching" indicator — non-matchable properties (`firstName`, `weakAlias`,
+  `gender`, …) are real scoring inputs. `datasets NAME` renders one
+  dataset's full metadata, including only the fields a given dataset carries.
+- **Documentation** under `python/docs/` (mkdocs + Material theme +
+  mkdocstrings): tutorial, CLI overview, and auto-extracted API reference.
+  Covers schema inheritance (e.g. `LegalEntity` spanning `Person`,
+  `Organization`, `Company`, and `PublicBody` in a single call) and
+  entity-reference graph traversal via statements.
 
-[Unreleased]: https://github.com/opensanctions/yente-client/compare/HEAD
+[Unreleased]: https://github.com/opensanctions/yente-client/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/opensanctions/yente-client/releases/tag/v0.1.0
