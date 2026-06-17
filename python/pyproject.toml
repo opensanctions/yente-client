@@ -30,6 +30,9 @@ cli = [
     "typer>=0.12",
     "rich>=13",
 ]
+mcp = [
+    "fastmcp>=3.4",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -43,6 +46,9 @@ dev = [
     # extra install. Mirrors yente-client[cli].
     "typer>=0.12",
     "rich>=13",
+    # MCP server deps so `make test` can import yente_client.mcp.server.
+    # Mirrors yente-client[mcp].
+    "fastmcp>=3.4",
     # Docs build (`make docs`): mkdocs + Material theme + mkdocstrings extracts
     # docstrings inline at build time; no separate regeneration step needed.
     "mkdocs>=1.6",
@@ -56,6 +62,7 @@ dev = [
 
 [project.scripts]
 yente-cli = "yente_client.cli.main:main"
+yente-mcp = "yente_client.mcp.main:main"
 
 [project.urls]
 Homepage = "https://github.com/opensanctions/yente-client"

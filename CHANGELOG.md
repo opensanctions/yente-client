@@ -8,6 +8,18 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **MCP server** (`yente-mcp`, `pip install 'yente-client[mcp]'`): exposes the
+  matching surface to LLM agents over the Model Context Protocol as five tools
+  (`match_entity`, `search_entities`, `fetch_entity_by_id`,
+  `fetch_entity_relations`, `describe_schema`) and `ftm://` / `yente://`
+  resources, built on `AsyncClient`. Runs over streamable-HTTP; auth is
+  bearer-token pass-through (the token is the caller's OpenSanctions API key,
+  forwarded downstream). Skeleton — the schema/model surface and response
+  shaping are covered by tests; the network tools are not yet exercised
+  end-to-end.
+
 ## [0.1.0] - 2026-06-07
 
 First public release of the `yente-client` Python SDK and the `yente-cli`
