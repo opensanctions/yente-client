@@ -181,3 +181,41 @@ def schema_index(matchable_only: bool = False) -> list[dict[str, Any]]:
     """Project every schema (or only matchable ones) as summaries, name-sorted."""
     names = matchable_schemata() if matchable_only else sorted(model["schemata"])
     return [schema_summary(name) for name in names]
+
+
+def type_values(type_name: str) -> dict[str, str]:
+    """Return an enum type's ``value → label`` map (``topic``, ``country``, …).
+
+    Empty for non-enum types (``date``, ``name``, …). The single source for the
+    controlled vocabularies the CLI and MCP expose.
+
+    Raises:
+        KeyError: if ``type_name`` is not a type in the bundled model.
+    """
+    if type_name not in model["types"]:
+        raise KeyError(type_name)
+    return dict(model["types"][type_name].get("values", {}))
+
+
+def describe_type(type_name: str) -> dict[str, Any]:
+    """Project an FtM value type, trimmed like schemata/properties.
+
+    Keeps ``name``, ``label``, ``description``, ``matchable`` (true-only), and
+    ``values`` (enum types only); drops structural cruft
+    (``maxLength``/``group``/``plural``/``pivot``) and omits empties.
+
+    Raises:
+        KeyError: if ``type_name`` is not a type in the bundled model.
+    """
+    if type_name not in model["types"]:
+        raise KeyError(type_name)
+    defn = model["types"][type_name]
+    return _compact(
+        {
+            "name": type_name,
+            "label": defn.get("label"),
+            "description": (defn.get("description") or "").strip(),
+            "matchable": bool(defn.get("matchable")) or None,
+            "values": dict(defn.get("values") or {}),
+        }
+    )

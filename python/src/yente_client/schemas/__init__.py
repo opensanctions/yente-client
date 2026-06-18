@@ -7,6 +7,7 @@ deprecation checks; navigate ``model`` directly for anything richer.
 
 from yente_client.schemas._lookup import (
     describe_schema,
+    describe_type,
     has_schema,
     is_a,
     is_deprecated,
@@ -18,10 +19,12 @@ from yente_client.schemas._lookup import (
     schema_index,
     schema_properties,
     schema_summary,
+    type_values,
 )
 
 __all__ = [
     "describe_schema",
+    "describe_type",
     "has_schema",
     "is_a",
     "is_deprecated",
@@ -33,4 +36,5 @@ __all__ = [
     "schema_index",
     "schema_properties",
     "schema_summary",
+    "type_values",
 ]

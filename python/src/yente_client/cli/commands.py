@@ -43,6 +43,7 @@ from yente_client.schemas import (
     matchable_schemata,
     model,
     schema_index,
+    type_values,
 )
 
 _FORMAT_HELP = "Output format. `auto` (default) renders a table on a TTY and JSON when piped."
@@ -1000,8 +1001,9 @@ def ref_topics_command(
     Use these names with `-t` / `--topics` on `match` and `search`. Sourced
     from ``model.types["topic"].values`` in the bundled snapshot.
     """
-    topic_values = model["types"].get("topic", {}).get("values", {})
-    entries = [{"name": name, "label": label} for name, label in sorted(topic_values.items())]
+    entries = [
+        {"name": name, "label": label} for name, label in sorted(type_values("topic").items())
+    ]
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
         print_json(entries)
@@ -1021,8 +1023,9 @@ def ref_countries_command(
     country-typed properties (``country``, ``nationality``, ``birthCountry``,
     ``jurisdiction``, …). Sourced from ``model.types["country"].values``.
     """
-    country_values = model["types"].get("country", {}).get("values", {})
-    entries = [{"code": code, "name": name} for code, name in sorted(country_values.items())]
+    entries = [
+        {"code": code, "name": name} for code, name in sorted(type_values("country").items())
+    ]
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
         print_json(entries)

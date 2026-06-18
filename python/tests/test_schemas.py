@@ -2,6 +2,7 @@ import pytest
 
 from yente_client.schemas import (
     describe_schema,
+    describe_type,
     has_schema,
     is_a,
     is_deprecated,
@@ -9,6 +10,7 @@ from yente_client.schemas import (
     model,
     schema_index,
     schema_properties,
+    type_values,
 )
 
 
@@ -160,3 +162,24 @@ def test_schema_index_matchable_only_is_summaries() -> None:
     assert "Person" in names
     assert all("properties" not in s for s in idx)  # summaries, no property list
     assert len(schema_index()) > len(idx)  # full index lists more
+
+
+def test_type_values_enums_and_unknown() -> None:
+    assert "sanction" in type_values("topic")
+    assert "us" in type_values("country")
+    assert set(type_values("gender")) >= {"male", "female"}
+    assert type_values("date") == {}  # non-enum type has no values
+    with pytest.raises(KeyError):
+        type_values("not_a_real_type")
+
+
+def test_describe_type_trims_and_keeps_signal() -> None:
+    country = describe_type("country")
+    assert country["label"] == "Country"
+    assert country["matchable"] is True
+    assert "us" in country["values"]
+    for dropped in ("maxLength", "group", "plural", "pivot"):
+        assert dropped not in country
+    # topic isn't matchable -> flag omitted; a non-enum type carries no values
+    assert "matchable" not in describe_type("topic")
+    assert "values" not in describe_type("date")

@@ -17,7 +17,7 @@ derived from the model at call time.
 from typing import Any
 
 from yente_client import schemas
-from yente_client.schemas import has_schema, model
+from yente_client.schemas import has_schema
 
 
 def schema_index() -> list[dict[str, Any]]:
@@ -54,18 +54,14 @@ def describe_schema(name: str) -> dict[str, Any]:
 
 def topic_values() -> dict[str, str]:
     """Return the ``topic`` vocabulary (value → label), e.g. for ``topics=`` filters."""
-    return _type_values("topic")
+    return schemas.type_values("topic")
 
 
 def country_values() -> dict[str, str]:
     """Return the ``country`` vocabulary (code → name) for nationality / jurisdiction props."""
-    return _type_values("country")
+    return schemas.type_values("country")
 
 
 def gender_values() -> dict[str, str]:
     """Return the ``gender`` vocabulary (value → label)."""
-    return _type_values("gender")
-
-
-def _type_values(type_name: str) -> dict[str, str]:
-    return dict(model["types"][type_name].get("values", {}))
+    return schemas.type_values("gender")

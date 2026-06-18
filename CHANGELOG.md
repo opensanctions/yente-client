@@ -11,7 +11,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **`schemas.describe_schema()` / `schema_index()` / `schema_properties()` /
-  `property_matchable()`** — a shared, condensed FtM model projection used by
+  `property_matchable()` / `describe_type()` / `type_values()`** — a shared,
+  condensed FtM model projection (schemata, properties, and value types) used by
   both `yente-cli ref` and the MCP `describe_schema`. Keeps the high-signal
   fields (descriptions, `extends`, `range`/`reverse`) and drops structural cruft
   (`label`/`plural`/flattened ancestor closure on schemata;
