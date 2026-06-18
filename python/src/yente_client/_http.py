@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from yente_client.env import HOSTED_HOSTS
 from yente_client.exceptions import (
     APIError,
     AuthenticationError,
@@ -22,8 +23,6 @@ from yente_client.exceptions import (
     RateLimitError,
     ServerError,
 )
-
-_HOSTED_HOSTS = ("api.opensanctions.org", "api.test.opensanctions.org")
 
 # Reject characters that would break the User-Agent grammar:
 # whitespace, parentheses (used to delimit comment blocks), semicolons
@@ -77,7 +76,7 @@ def build_user_agent(app_name: str | None = None, override: str | None = None) -
 
 def is_opensanctions_url(base_url: str) -> bool:
     """Return True when ``base_url`` points at the OpenSanctions API."""
-    return any(host in base_url for host in _HOSTED_HOSTS)
+    return any(host in base_url for host in HOSTED_HOSTS)
 
 
 def prepare_http_kwargs(

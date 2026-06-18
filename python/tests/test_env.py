@@ -10,6 +10,15 @@ def test_var_names_are_stable() -> None:
     assert env.BASE_URL_VAR == "YENTE_BASE_URL"
 
 
+def test_hosted_hosts_cover_prod_and_tlds() -> None:
+    assert "api.opensanctions.org" in env.HOSTED_HOSTS
+    assert "api.opensanctions.net" in env.HOSTED_HOSTS
+    assert "api.opensanctions.com" in env.HOSTED_HOSTS
+    assert "api.test.opensanctions.org" in env.HOSTED_HOSTS
+    # the default base URL's host is one of them
+    assert env.DEFAULT_BASE_URL.split("//", 1)[1] in env.HOSTED_HOSTS
+
+
 def test_api_key_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENSANCTIONS_API_KEY", "sk-123")
     assert env.api_key() == "sk-123"

@@ -21,6 +21,18 @@ API_KEY_VAR = "OPENSANCTIONS_API_KEY"
 BASE_URL_VAR = "YENTE_BASE_URL"
 """Name of the base-URL env var. Also fed to Typer's ``envvar=`` in the CLI."""
 
+HOSTED_HOSTS = (
+    "api.opensanctions.org",
+    "api.opensanctions.net",
+    "api.opensanctions.com",
+    "api.test.opensanctions.org",
+    "api.test.opensanctions.net",
+    "api.test.opensanctions.com",
+)
+"""Hostnames of the hosted OpenSanctions API, across every TLD we might serve
+from. Used to decide whether a client built without an ``api_key`` warrants a
+warning; a self-hosted yente is not in this set and stays quiet."""
+
 
 def api_key() -> str | None:
     """Return ``$OPENSANCTIONS_API_KEY``, or ``None`` if unset."""
