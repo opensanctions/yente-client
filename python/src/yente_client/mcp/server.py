@@ -23,10 +23,13 @@ from yente_client.entities import EntityInput
 from yente_client.exceptions import YenteError
 from yente_client.mcp import introspect, shaping
 from yente_client.mcp._deps import FastMCP, ToolError, get_http_headers
-from yente_client.mcp.auth import client_for, parse_bearer
+from yente_client.mcp.auth import client_for, resolve_api_key
 from yente_client.models import AdjacentPropertyResponse, AdjacentResponse
 
 BASE_URL = os.environ.get("YENTE_BASE_URL", "https://api.opensanctions.org")
+# Fallback API key for the whole server, used when a request carries no bearer
+# token — lets you run yente-mcp locally against a real API for testing.
+API_KEY = os.environ.get("OPENSANCTIONS_API_KEY")
 
 mcp: FastMCP = FastMCP(
     name="yente",
@@ -42,9 +45,12 @@ mcp: FastMCP = FastMCP(
 
 
 def _resolve_client() -> AsyncClient:
-    """Build (cached) an AsyncClient from the request's bearer token."""
-    headers = get_http_headers()
-    token = parse_bearer(headers.get("authorization"))
+    """Build (cached) an AsyncClient for this request.
+
+    Uses the request's bearer token, falling back to the server's
+    ``OPENSANCTIONS_API_KEY`` (see :func:`resolve_api_key`).
+    """
+    token = resolve_api_key(get_http_headers().get("authorization"), API_KEY)
     return client_for(token, BASE_URL)
 
 

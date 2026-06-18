@@ -255,44 +255,148 @@ detail-on-demand" is the core ergonomic.
 
 ## Config & auth
 
-Two distinct concerns, collapsed into one mechanism for v1:
+Two distinct concerns the auth design has to satisfy:
 
 - **A. Client → MCP** — who may use the MCP, and as whom.
 - **B. MCP → yente** — the API key the server uses for the `AsyncClient` call
   (`base_url`, default `https://api.opensanctions.org`; `api_key`).
 
-**v1 mechanism: bearer-token pass-through, where the bearer token *is* the
-OpenSanctions API key.** The client sends `Authorization: Bearer <key>`
-(standard for MCP HTTP transports; FastMCP exposes it to tool code). The MCP
-reads it per-request and builds the downstream `AsyncClient(api_key=<that key>)`.
-This collapses A and B and gives us:
+There are **two base auth modes**, selected by config (`YENTE_MCP_AUTH` /
+`--auth`). A given *process* is in one mode; the hosted deployment composes both
+on one URL via a dual-auth verifier (below). They differ only in how A→B is
+resolved; everything downstream of "we have an API key" is shared.
 
-1. **No secret in the MCP.** It's stateless w.r.t. credentials — it forwards
-   identity, holds nothing.
-2. **Per-tenant by construction.** Each client's identity, quota, and billing
-   ride their own key to the place that already enforces them.
-3. **Enforcement for free.** The MCP's downstream calls hit yente through its
-   existing SaaS gateway, which validates the key and enforces quota exactly as
-   for the REST API. The SDK already raises `AuthenticationError` /
-   `RateLimitError`; the MCP maps those to MCP errors. No new identity system,
-   no new validation path. (Optionally FastMCP's bearer verifier can reject a
-   missing/malformed token up front, before any work.)
+### Mode `passthrough` (default) — covers no-auth *and* bearer-key
 
-**Upgrade path — OAuth 2.1 resource server** (FastMCP-supported via the MCP
-SDK's `TokenVerifier` + `AuthSettings`): for a public product where third-party
-agents shouldn't handle raw API keys. Issue scoped tokens (read/write scopes →
-tools), validate against an authorization server, map token → yente key
-server-side. More moving parts (AS, dynamic client registration); v2.
+The bearer token **is** the OpenSanctions API key. The client sends
+`Authorization: Bearer <key>`; the MCP reads it per-request and builds the
+downstream `AsyncClient(api_key=<that key>)`. No FastMCP auth provider, no
+validation in the MCP. This single path already covers two of the three modes we
+care about, because an absent/blank token degrades to `api_key=None`:
+
+- **No-auth (on-prem, open yente):** client sends no token → `None` → calls land
+  unauthenticated against a gateway-less yente. Already implemented:
+  `parse_bearer` returns `None` when absent (`auth.py`), `client_for(None, …)`
+  builds an unauthenticated client.
+- **Bearer-key (hosted-key / programmatic / CI / the `mcp-remote` bridge):**
+  client sends its API key → forwarded downstream.
+
+Properties: **no secret in the MCP** (it forwards identity, holds nothing);
+**per-tenant by construction** (each key carries its own quota/billing);
+**enforcement for free** (yente's existing SaaS gateway validates the key and
+enforces quota exactly as for REST; the SDK raises `AuthenticationError` /
+`RateLimitError`, which the MCP maps to MCP errors). No new identity system.
+
+This is the **agent-native path** — headless/unattended workloads (CI, cron,
+deployed services, scheduled agents) have no browser and no token-refresh
+machinery, so they provision a long-lived API key and send it here. Keep
+`passthrough` first-class; OAuth does not subsume it.
+
+### Mode `oauth` — Ory login, for attended clients
+
+For a public product where a human shouldn't copy-paste raw API keys.
+**Ory.sh is already our Authorization Server** — the same OIDC provider behind
+the website login — so the expensive part of OAuth (standing up an AS) is done.
+The flow:
+
+```
+Claude Desktop ──login (auth-code + PKCE)──▶ Ory.sh (existing AS)
+      │◀── Ory access token ───────────────┘
+      ├── Bearer <ory-token> ──▶ yente-mcp (Resource Server)
+      │                            │ validate JWT locally (Ory JWKS, iss, aud)
+      │                            ├── ?access_token=<ory-token> ──▶ serviceapi /auth/credential  (NEW)
+      │                            │◀────────── Credential.secret ──┘
+      │                            └── AsyncClient(api_key=secret) ──▶ yente gateway (unchanged)
+```
+
+1. **Ory = AS.** Already does auth-code + PKCE, JWKS, `/.well-known` metadata.
+2. **MCP = Resource Server.** FastMCP `JWTVerifier` against Ory's JWKS, checking
+   `iss == OIDC_ISSUER_URL` and `aud == OIDC_AUDIENCE` — the same validation as
+   serviceapi's `parse_access_token`, run inside the MCP. FastMCP auto-serves the
+   protected-resource metadata + 401 challenge that triggers Desktop's login.
+3. **Token → API key via a new serviceapi endpoint.** A handler guarded by the
+   existing `request_token_user` dependency (which already accepts a token via
+   `?access_token=` query param) returns the customer's API `Credential.secret`.
+   If the customer has **no** API credential it returns an error telling the user
+   to create one at `opensanctions.org/account` — it does **not** auto-mint (a
+   deliberate departure from the website's `auth_callback`, which auto-provisions
+   a trial). The MCP already sends the token as a query param, so the dependency
+   needs **no change**; the only new code is the ~15-line endpoint body.
+   (Tracked: opensanctions/operations#2620.)
+4. **yente gateway stays key-based and untouched** — the MCP swaps the Ory token
+   for the user's existing API key and calls downstream as today.
+
+Chosen over "make the yente gateway validate Ory tokens directly" (bigger
+gateway work, duplicates identity logic): the exchange endpoint reuses
+`request_token_user` + `make_auto_api_credential` and keeps the gateway as-is.
+
+**Attended only.** Interactive auth-code needs a browser, a human, and an MCP
+client that manages refresh — fine for agents running *inside* Claude Desktop /
+claude.ai / interactive Claude Code (they ride the human's session), a dead end
+for truly headless agents. Those use `passthrough`. The split is
+attended-vs-unattended, not human-vs-agent. (Client-credentials grant is the
+"OAuth for machines" option but authenticates the client not a user, needs a
+client→customer map, and is redundant with the API key we already issue — skip.)
+
+### Hosted single endpoint (`mcp.opensanctions.org`) — dual-auth verifier
+
+One advertised URL must serve both attended OAuth users and headless key
+clients. A single-mode process can't, so the hosted deployment composes the two
+modes in **one custom `TokenVerifier`** that branches on the *shape* of the
+inbound bearer:
+
+- **No token** → `401 + WWW-Authenticate` + protected-resource metadata →
+  triggers OAuth login in attended clients.
+- **JWT-shaped token** (`a.b.c`, Ory issuer) → validate against Ory JWKS →
+  principal = user → token→key exchange (mode `oauth`).
+- **Non-JWT token** (32-hex API key) → accept as an opaque key principal, forward
+  downstream unchanged (mode `passthrough`). Never sees the 401, never triggers
+  OAuth.
+
+A key-bearing headless client sends its key on the first request and skips OAuth
+entirely; a human connects with no credential, gets challenged, logs in. They
+coexist on one URL.
+
+**Fail closed on the JWT branch (the one rule that matters):** if a bearer *is*
+JWT-shaped and claims the Ory issuer but fails signature/expiry validation,
+**reject with 401** — never fall through to treating it as an API key. The
+discriminator is purely structural (is it a JWT at all?); validation is
+authoritative *within* each branch. The hex-vs-JWT shapes are distinct enough
+that the sniff itself is low-risk; the fallback *ordering* is what must be
+deliberate.
+
+### State / caching (mode `oauth`, hosted)
+
+`oauth` is the only mode that isn't credential-free: the MCP transiently caches
+`token → secret`. Two module-level dicts in `auth.py` (same pattern as today's
+`_CLIENTS`), both **in-process memory**:
+
+- `_SECRETS: sha256(token) → (secret, exp)` — TTL-bounded by the token's own
+  `exp` (lazy eviction); LRU-bounded for a busy server.
+- `_CLIENTS: (secret, base_url) → AsyncClient` — today's cache, rekeyed on the
+  *secret* so multiple tokens for the same customer share one httpx pool.
+
+It's **per-process, not shared** — fine, because the cache is a latency/load
+optimization, not a source of truth (serviceapi is). A miss costs one extra
+exchange round-trip. **No Redis for v1**; that's the upgrade if cross-replica
+sharing is ever wanted, not the starting point. Hash the token for the key (hold
+the raw bearer no longer than needed; the `secret` is still held to use it, so
+this isn't secret-free). JWT validation itself is stateless bar Ory's JWKS
+keyset, cached one-time like serviceapi's `fetch_jwk`.
 
 **Implementation notes.**
-- Confirm FastMCP's accessor for the inbound HTTP request/headers from within a
-  tool, and thread the bearer value into the SDK call.
-- Per-request keys must not spin up a fresh `httpx` pool each call: **cache an
-  `AsyncClient` per key** (small LRU) or add a per-request auth override to the
-  SDK.
-- `main.py` still reads `YENTE_BASE_URL` to target hosted vs. self-hosted; for
-  an open self-hosted yente (no gateway) the bearer key is simply unused
-  downstream.
+- `server.py`: make the FastMCP instance a `build_server(auth_mode)` factory so
+  the `auth=` provider is wired (or omitted) per mode; `main.py` calls it.
+- Confirm FastMCP's accessor for inbound headers / validated claims from a tool
+  (`get_http_headers` is in use today for the bearer); thread the resolved key
+  into the SDK call via a shared `resolve_api_key(request) -> str | None`.
+- Per-request keys must not spin up a fresh `httpx` pool each call (the caches
+  above); add an LRU bound + close-on-shutdown (FastMCP lifespan) — currently a
+  TODO in `auth.py`.
+- Optional: dedupe concurrent cache-miss exchanges for the same token
+  (in-flight-future map) to avoid a dogpile. Not v1.
+- `main.py` reads `YENTE_BASE_URL` (hosted vs self-hosted) and, for `oauth`, the
+  Ory issuer / JWKS URL / audience and the serviceapi credential-exchange URL.
 
 ## Error mapping
 
@@ -307,11 +411,18 @@ transport-level errors.
 ## Open questions
 
 1. ~~Transport~~ — **decided:** streamable-HTTP, required for v1; stdio optional.
-2. **Auth** — **decided for v1:** bearer-token pass-through (token = OpenSanctions
-   API key), enforcement at yente's gateway, OAuth 2.1 as the v2 upgrade. Still
-   to confirm: FastMCP's request-header accessor; per-key `AsyncClient` caching
-   vs. an SDK per-request auth override; whether to add an up-front bearer
-   verifier or rely purely on downstream rejection.
+2. **Auth** — **decided:** two base modes (`passthrough` = no-auth + bearer-key,
+   already implemented; `oauth` = Ory login + serviceapi credential exchange),
+   composed on the hosted `mcp.opensanctions.org` via a shape-sniffing dual-auth
+   verifier (fail-closed on the JWT branch). Enforcement stays at yente's gateway.
+   Still to confirm: **(a)** does our Ory project allow Dynamic Client
+   Registration (RFC 7591)? If not, use FastMCP's `OAuthProxy` with the existing
+   `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`. **(b)** the `aud` Ory issues to MCP
+   clients matches `OIDC_AUDIENCE` (or add a dedicated MCP audience/scope).
+   **(c)** which credential the exchange endpoint returns when a customer has
+   several API credentials (lean: the primary/default API credential); if none
+   exists it errors to `opensanctions.org/account` rather than auto-minting
+   (opensanctions/operations#2620).
 3. **`match_entity`** — single-entity only (lean), or expose the SDK's batch
    capability? Batching is awkward for an agent; the REST/SDK batch path stays
    available for programmatic callers.
@@ -335,9 +446,18 @@ transport-level errors.
    (no server dependency — implementable/testable first, in isolation).
 3. Implement the 4 `AsyncClient` tools with `shaping.py` and error mapping.
 4. Add the 2 live `yente://` resources.
-5. Auth: bearer-token pass-through — read the inbound `Authorization` header,
-   thread the key into a per-key-cached `AsyncClient`; map `AuthenticationError`
-   / `RateLimitError` to MCP errors. (+ `YENTE_BASE_URL` config wiring.)
-6. Tests (mock `AsyncClient` transport, shaping, error mapping, auth
-   pass-through) mirroring the SDK's `httpx.MockTransport` convention; docs page;
-   `CHANGELOG.md` entry.
+5. Auth, mode `passthrough` (covers no-auth + bearer-key): read the inbound
+   `Authorization` header, thread the key into a per-key-cached `AsyncClient`;
+   map `AuthenticationError` / `RateLimitError` to MCP errors. (+ `YENTE_BASE_URL`
+   config wiring.) *Already implemented in `auth.py` / `server.py`.*
+6. Auth, mode `oauth` (attended clients): new serviceapi `/auth/credential`
+   exchange endpoint (serviceapi-side work); `build_server(auth_mode)` factory +
+   FastMCP `JWTVerifier` against Ory; `token → secret` TTL cache; Ory issuer /
+   JWKS / audience + exchange-URL config. Prereq: confirm Ory DCR (else
+   `OAuthProxy`).
+7. Hosted composition: dual-auth `TokenVerifier` (shape-sniff JWT vs API key,
+   fail-closed on the JWT branch) so `mcp.opensanctions.org` serves both modes on
+   one URL.
+8. Tests (mock `AsyncClient` transport, shaping, error mapping, both auth modes
+   + the dual-auth shape-sniff/fail-closed path) mirroring the SDK's
+   `httpx.MockTransport` convention; docs page; `CHANGELOG.md` entry.

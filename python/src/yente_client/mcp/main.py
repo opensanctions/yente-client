@@ -5,8 +5,10 @@ Runs the FastMCP server. Defaults to streamable-HTTP (the v1 deliverable);
 ``pyproject.toml``'s ``[project.scripts]`` calls.
 
 Config (all overridable by flag): ``YENTE_MCP_TRANSPORT`` (http|stdio),
-``YENTE_MCP_HOST``, ``YENTE_MCP_PORT``, and ``YENTE_BASE_URL`` (the yente the
-server forwards calls to; read in :mod:`yente_client.mcp.server`).
+``YENTE_MCP_HOST``, ``YENTE_MCP_PORT``, ``YENTE_BASE_URL`` (the yente the server
+forwards calls to), and ``OPENSANCTIONS_API_KEY`` (fallback key used when a
+request carries no bearer token) — the latter two read in
+:mod:`yente_client.mcp.server`.
 """
 
 import argparse
