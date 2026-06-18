@@ -23,6 +23,7 @@ from yente_client.exceptions import YenteError
 from yente_client.mcp import introspect, shaping
 from yente_client.mcp._deps import FastMCP, ToolError, get_http_headers
 from yente_client.mcp.auth import client_for, resolve_api_key
+from yente_client.mcp.errors import describe_error
 from yente_client.models import AdjacentPropertyResponse, AdjacentResponse
 
 BASE_URL = env.base_url()
@@ -100,7 +101,7 @@ async def match_entity(
             topics=topics,
         )
     except YenteError as exc:
-        raise ToolError(str(exc)) from exc
+        raise ToolError(describe_error(exc)) from exc
     return {
         "query_schema": schema,
         "total": resp.total.value,
@@ -139,7 +140,7 @@ async def search_entities(
             q, limit=limit, offset=offset, fuzzy=fuzzy, simple=simple, **kwargs
         )
     except YenteError as exc:
-        raise ToolError(str(exc)) from exc
+        raise ToolError(describe_error(exc)) from exc
     return {
         "total": resp.total.value,
         "results": [shaping.shape_entity(r) for r in resp.results],
@@ -157,7 +158,7 @@ async def fetch_entity_by_id(entity_id: str, *, nested: bool = True) -> dict[str
     try:
         entity = await client.fetch(entity_id, nested=nested)
     except YenteError as exc:
-        raise ToolError(str(exc)) from exc
+        raise ToolError(describe_error(exc)) from exc
     # The detail tool: return the full entity, not a trimmed view.
     return entity.model_dump(by_alias=True, mode="json", exclude_none=True)
 
@@ -184,7 +185,7 @@ async def fetch_entity_relations(
         else:
             resp = await client.adjacent(entity_id, prop=prop, limit=limit, offset=offset)
     except YenteError as exc:
-        raise ToolError(str(exc)) from exc
+        raise ToolError(describe_error(exc)) from exc
     return resp.model_dump(by_alias=True, mode="json", exclude_none=True)
 
 
