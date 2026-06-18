@@ -408,6 +408,47 @@ errors / structured payloads the model can read and act on (e.g. a
 screened" message, not an opaque failure). Don't let raw exceptions become
 transport-level errors.
 
+Implemented in `errors.describe_error`: every SDK error maps to a non-empty
+message carrying a `status` + `retryable` hint (network/5xx/429 retryable, 4xx
+not). This closed a real bug — `ToolError(str(exc))` emitted an *empty* body for
+httpx timeouts (which stringify to `""`), so a transient blip was
+indistinguishable from a bad argument and read as a silent hang.
+
+## Field feedback (agent-driven testing) & follow-ups
+
+An agent driving the server end-to-end (screening Arkady Rotenberg) surfaced the
+following. The retrieval surface is the weak side; the matching surface tested
+well (the score + `match` + feature-level explanation is "exactly the shape an
+agent needs to justify a decision" — keep it structured, do **not** flatten it).
+
+1. **Error semantics — fixed** (see above). Outstanding nicety: a cheap
+   health/capabilities probe so an agent can check liveness before an expensive
+   call.
+2. **Lighter retrieval default (highest-value follow-up).** `fetch_entity_by_id`
+   with `nested=true` (the default) inlines the *entire* graph — ~200 KB for a
+   major POI — which (a) makes `fetch_entity_relations` largely redundant (the
+   graph is already inlined) and (b) self-duplicates: the same entity's full
+   multilingual notes reappear under every edge that points to it, with no
+   total-count or truncation signal. Proposed **stub/expand** shape: edges
+   resolve to `{id, caption, schema, role}` by default, the agent expands a
+   specific edge on demand; add per-property edge counts + a truncation flag.
+   This is the workflow agents reach for (cheap graph → targeted detail) and
+   subsumes the dedup problem. Likely makes `nested=true` non-default and
+   documents its cost.
+3. **Markdown rendering (presentation layer, only after #2).** Keep
+   `match_entity` structured. For `fetch`/`relations`, a hybrid: markdown body +
+   an **edge table** (the single biggest readability win), with IDs kept
+   machine-extractable (backticked / own column) and per-statement **dataset
+   provenance preserved** — that attribution is what makes screening auditable.
+   A deterministic FtM→markdown renderer keyed off `featured` properties would be
+   principled and reusable. Caveat: markdown is lossy on adversarial data
+   (pipes / newlines in transliterated names) — escape hard, keep ambiguous bits
+   structured.
+4. **Smaller:** drop zero-scored features from the `match_entity` explanation
+   summary (`shaping._top_explanations`); `caption` mojibake (CP1251
+   double-encode) is upstream data, best normalized at the API/SDK boundary so
+   every consumer doesn't re-solve it (SDK concern, not MCP).
+
 ## Open questions
 
 1. ~~Transport~~ — **decided:** streamable-HTTP, required for v1; stdio optional.
