@@ -12,12 +12,11 @@ and :mod:`~yente_client.mcp.shaping`. Anything beyond plumbing belongs there so
 it stays testable without FastMCP.
 """
 
-import os
 from typing import Any
 
 from pydantic import ValidationError
 
-from yente_client import entities
+from yente_client import entities, env
 from yente_client.async_client import AsyncClient
 from yente_client.entities import EntityInput
 from yente_client.exceptions import YenteError
@@ -26,10 +25,10 @@ from yente_client.mcp._deps import FastMCP, ToolError, get_http_headers
 from yente_client.mcp.auth import client_for, resolve_api_key
 from yente_client.models import AdjacentPropertyResponse, AdjacentResponse
 
-BASE_URL = os.environ.get("YENTE_BASE_URL", "https://api.opensanctions.org")
+BASE_URL = env.base_url()
 # Fallback API key for the whole server, used when a request carries no bearer
 # token — lets you run yente-mcp locally against a real API for testing.
-API_KEY = os.environ.get("OPENSANCTIONS_API_KEY")
+API_KEY = env.api_key()
 
 mcp: FastMCP = FastMCP(
     name="yente",
