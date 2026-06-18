@@ -13,6 +13,7 @@ from yente_client._translation import (
     unwrap_match_response,
 )
 from yente_client.entities import EntityInput
+from yente_client.env import DEFAULT_BASE_URL
 from yente_client.exceptions import ConfigurationError, NotFoundError, TransportError
 from yente_client.filters import MatchFilters, SearchFilters
 from yente_client.models import (
@@ -58,7 +59,7 @@ class Client:
         self,
         *,
         api_key: str | None = None,
-        base_url: str = "https://api.opensanctions.org",
+        base_url: str = DEFAULT_BASE_URL,
         app_name: str | None = None,
         user_agent: str | None = None,
         timeout: float | httpx.Timeout | None = None,

@@ -15,9 +15,6 @@ from dataclasses import dataclass
 from yente_client.async_client import AsyncClient
 from yente_client.client import Client
 
-_DEFAULT_BASE_URL = "https://api.opensanctions.org"
-"""Default API root used when neither ``--base-url`` nor ``$YENTE_BASE_URL`` is set."""
-
 
 @dataclass(frozen=True)
 class CliConfig:

@@ -14,6 +14,7 @@ import os
 import pytest
 from typer.testing import CliRunner
 
+from yente_client import env
 from yente_client.entities import Person
 from yente_client.models import (
     AlgorithmsResponse,
@@ -88,10 +89,10 @@ def test_cli_status_against_live_api() -> None:
     """End-to-end CLI smoke: `yente-cli status` against the real API."""
     from yente_client.cli.main import app
 
-    key = os.environ.get("OPENSANCTIONS_API_KEY")
+    key = env.api_key()
     if not key:
         pytest.skip("OPENSANCTIONS_API_KEY not set")
-    base_url = os.environ.get("YENTE_BASE_URL", "https://api.test.opensanctions.org")
+    base_url = os.environ.get(env.BASE_URL_VAR, "https://api.test.opensanctions.org")
     runner = CliRunner()
     result = runner.invoke(
         app,

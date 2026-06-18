@@ -5,6 +5,11 @@ import pytest
 from yente_client import env
 
 
+def test_var_names_are_stable() -> None:
+    assert env.API_KEY_VAR == "OPENSANCTIONS_API_KEY"
+    assert env.BASE_URL_VAR == "YENTE_BASE_URL"
+
+
 def test_api_key_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENSANCTIONS_API_KEY", "sk-123")
     assert env.api_key() == "sk-123"

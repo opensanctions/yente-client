@@ -5,9 +5,10 @@ The Typer app is configured here; the subcommands themselves live in
 ``pyproject.toml``'s ``[project.scripts]`` entry calls.
 """
 
+from yente_client import env
 from yente_client.cli._deps import typer
 from yente_client.cli.commands import register
-from yente_client.cli.config import _DEFAULT_BASE_URL, CliConfig
+from yente_client.cli.config import CliConfig
 
 app = typer.Typer(
     name="yente-cli",
@@ -47,14 +48,14 @@ def _app_callback(
     api_key: str | None = typer.Option(
         None,
         "--api-key",
-        envvar="OPENSANCTIONS_API_KEY",
+        envvar=env.API_KEY_VAR,
         show_envvar=True,
         help="API key for the OpenSanctions API. Falls back to env.",
     ),
     base_url: str = typer.Option(
-        _DEFAULT_BASE_URL,
+        env.DEFAULT_BASE_URL,
         "--base-url",
-        envvar="YENTE_BASE_URL",
+        envvar=env.BASE_URL_VAR,
         show_envvar=True,
         help="API root. Use to target a yente instance.",
     ),
