@@ -197,8 +197,11 @@ async def fetch_entity_relations(
 @mcp.tool
 def describe_schema(schema: str | None = None) -> dict[str, Any]:
     """Look up the FtM data model (offline). No arg → index of matchable schemata;
-    a name (e.g. "Person") → that schema's properties, their types, and which
-    relationship properties point where. Use before match_entity.
+    a name (e.g. "Person") → that schema's properties and their types. Use before
+    match_entity to fill `properties` with real field names. Properties marked
+    `stub: true` are relationship edges (e.g. "ownershipOwner", "sanctions") —
+    pass their name as `prop` to fetch_entity_relations; don't set them in
+    match_entity.
     """
     if schema is None:
         return {"schemata": introspect.schema_index()}

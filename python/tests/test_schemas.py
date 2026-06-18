@@ -122,21 +122,25 @@ def test_describe_schema_property_field_policy() -> None:
     bd = props["birthDate"]
     assert bd["type"] == "date"
     assert bd["matchable"] is True
-    for dropped in ("maxLength", "qname", "deprecated", "stub", "hidden", "format"):
+    for dropped in ("maxLength", "qname", "deprecated", "hidden", "format"):
         assert dropped not in bd
 
 
-def test_schema_properties_excludes_stubs() -> None:
-    names = {p["name"] for p in schema_properties("Person")}
-    assert "birthDate" in names
-    assert "images" not in names  # stub (reverse edge)
+def test_schema_properties_includes_stub_edges_marked() -> None:
+    props = {p["name"]: p for p in schema_properties("Person")}
+    # Stub (reverse-edge) properties ARE included — they're the relationship
+    # edges fetch_entity_relations traverses — but marked so callers don't treat
+    # them as settable match input.
+    assert props["ownershipOwner"]["stub"] is True
+    assert props["ownershipOwner"]["type"] == "entity"
+    assert "stub" not in props["birthDate"]  # settable attribute, no marker
 
 
-def test_property_matchable_resolves_type_default() -> None:
+def test_property_matchable_omitted_when_false() -> None:
     props = {p["name"]: p for p in schema_properties("Person")}
     assert props["birthDate"]["matchable"] is True
     assert props["citizenship"]["matchable"] is True  # via the country type
-    assert props["firstName"]["matchable"] is False
+    assert "matchable" not in props["firstName"]  # false -> omitted
 
 
 def test_empty_values_are_omitted() -> None:

@@ -71,13 +71,13 @@ def test_ref_schema_person_json(runner) -> None:
     assert "name" in prop_names
 
 
-def test_ref_schema_excludes_stubs(runner) -> None:
-    """Stub (reverse-edge) properties don't show up — matches the codegen."""
+def test_ref_schema_includes_stub_edges_marked(runner) -> None:
+    """Stub (reverse-edge) properties ARE shown — they're the relationship edges
+    fetch_entity_relations traverses — but marked so they read as edges."""
     summary = json.loads(runner.invoke(app, ["ref", "schema", "Person", "-f", "json"]).stdout)
-    prop_names = {p["name"] for p in summary["properties"]}
-    # `images` and `associates` are stub properties on Person.
-    assert "images" not in prop_names
-    assert "associates" not in prop_names
+    by_name = {p["name"]: p for p in summary["properties"]}
+    assert by_name["ownershipOwner"]["stub"] is True
+    assert "stub" not in by_name["birthDate"]  # settable attribute
 
 
 def test_ref_schema_omits_deprecated_field(runner) -> None:
@@ -94,11 +94,11 @@ def test_ref_schema_property_matchable_resolves_type_defaults(runner) -> None:
     by_name = {p["name"]: p for p in summary["properties"]}
     assert by_name["birthDate"]["matchable"] is True
     assert by_name["citizenship"]["matchable"] is True
-    # Non-matchable per the FtM model, but still actively used in scoring
-    # via dedicated matcher features. The flag does not mean "useful".
-    assert by_name["firstName"]["matchable"] is False
-    assert by_name["lastName"]["matchable"] is False
-    assert by_name["gender"]["matchable"] is False
+    # Non-matchable per the FtM model (omitted now that false flags are dropped),
+    # but still actively used in scoring via dedicated matcher features.
+    assert "matchable" not in by_name["firstName"]
+    assert "matchable" not in by_name["lastName"]
+    assert "matchable" not in by_name["gender"]
 
 
 def test_ref_schema_table_includes_legend(runner) -> None:

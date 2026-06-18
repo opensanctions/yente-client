@@ -13,10 +13,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`schemas.describe_schema()` / `schema_index()` / `schema_properties()` /
   `property_matchable()`** — a shared, condensed FtM model projection used by
   both `yente-cli ref` and the MCP `describe_schema`. Keeps the high-signal
-  fields (descriptions, `matchable`, `extends`, `range`/`reverse`) and drops
-  structural cruft (`label`/`plural`/flattened ancestor closure on schemata;
-  `maxLength`/`qname`/`deprecated`/`format` on properties), omits empty values,
-  and resolves per-property `matchable` with the FtM type default.
+  fields (descriptions, `extends`, `range`/`reverse`) and drops structural cruft
+  (`label`/`plural`/flattened ancestor closure on schemata;
+  `maxLength`/`qname`/`deprecated`/`format` on properties), and omits empty
+  values. Boolean flags (`matchable`, `stub`, `edge`) appear only when true, and
+  `matchable` resolves the FtM type default. Relationship (`stub`) properties —
+  the `fetch_entity_relations` targets — are kept and flagged `stub: true`.
 
 ### Changed
 

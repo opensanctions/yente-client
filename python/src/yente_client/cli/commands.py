@@ -971,13 +971,14 @@ def ref_schema_command(
                 p["name"],
                 p["type"],
                 "✓" if p.get("matchable") else "",
+                "stub" if p.get("stub") else "",
                 _truncate(p.get("description", ""), 50),
             ]
             for p in properties
         ]
         print_table(
             rows,
-            headers=["property", "type", "matchable", "description"],
+            headers=["property", "type", "matchable", "flags", "description"],
             title=f"{len(properties)} property/properties (own + inherited)",
         )
         typer.echo("")

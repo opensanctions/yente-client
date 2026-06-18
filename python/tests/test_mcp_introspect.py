@@ -72,9 +72,9 @@ def test_describe_schema_non_entity_property_omits_range() -> None:
 def test_describe_schema_surfaces_matchable_flag_both_ways() -> None:
     props = {p["name"]: p for p in introspect.describe_schema("Person")["properties"]}
     assert props["birthDate"]["matchable"] is True
-    # firstName feeds name reconstruction but is non-matchable — still returned,
-    # since the rule for callers is "send every property you have".
-    assert props["firstName"]["matchable"] is False
+    # firstName feeds name reconstruction but is non-matchable — still returned
+    # (just without a matchable flag), since the rule is "send every property".
+    assert "matchable" not in props["firstName"]
     assert "firstName" in props
 
 

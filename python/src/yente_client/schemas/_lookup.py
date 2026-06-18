@@ -122,7 +122,9 @@ def _project_property(name: str, prop_def: dict[str, Any]) -> dict[str, Any]:
             "name": name,
             "label": prop_def.get("label"),
             "type": prop_def.get("type"),
-            "matchable": property_matchable(prop_def),
+            # flags are only emitted when true (false reads as absent)
+            "matchable": property_matchable(prop_def) or None,
+            "stub": prop_def.get("stub") or None,
             "description": (prop_def.get("description") or "").strip(),
             "range": prop_def.get("range"),
             "reverse": prop_def.get("reverse"),
@@ -132,19 +134,20 @@ def _project_property(name: str, prop_def: dict[str, Any]) -> dict[str, Any]:
 
 
 def schema_properties(schema: str) -> list[dict[str, Any]]:
-    """Project a schema's usable properties (own + inherited), sorted by name.
+    """Project a schema's properties (own + inherited), sorted by name.
 
-    Excludes ``stub`` (reverse-edge) properties — they're navigation-only, not
-    something a caller sends, and the exclusion matches the entity codegen.
+    Includes ``stub`` (reverse-edge) properties — those are the relationship
+    edges ``fetch_entity_relations`` traverses (``ownershipOwner``,
+    ``sanctions``, …) — but marks them ``stub: true`` so callers can tell a
+    traversable edge from a settable attribute (stubs aren't valid match input).
     """
     if not has_schema(schema):
         raise KeyError(schema)
     chosen: dict[str, dict[str, Any]] = {}
     for ancestor in model["schemata"][schema]["schemata"]:
         for pname, pdef in model["schemata"].get(ancestor, {}).get("properties", {}).items():
-            if pname in chosen or pdef.get("stub"):
-                continue
-            chosen[pname] = pdef
+            if pname not in chosen:
+                chosen[pname] = pdef
     return [_project_property(name, chosen[name]) for name in sorted(chosen)]
 
 
@@ -157,8 +160,10 @@ def schema_summary(schema: str) -> dict[str, Any]:
         {
             "name": schema,
             "description": (defn.get("description") or "").strip(),
-            "matchable": bool(defn.get("matchable", False)),
-            "edge": defn.get("edge"),  # only present (and only kept) for edge schemata
+            # flags only emitted when true (false reads as absent)
+            "matchable": bool(defn.get("matchable")) or None,
+            # `edge` is a rich dict in the model; reduce to "is this an edge?"
+            "edge": True if defn.get("edge") is not None else None,
             "extends": list(defn.get("extends") or []),
             "featured": list(defn.get("featured") or []),
         }
