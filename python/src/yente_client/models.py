@@ -82,6 +82,19 @@ class ScoredEntity(Entity):
     match: bool
     explanations: dict[str, FeatureResult] = Field(default_factory=dict)
 
+    @property
+    def contributing_explanations(self) -> dict[str, FeatureResult]:
+        """The features that actually moved the score — the non-zero subset.
+
+        Use when presenting *why* a candidate scored as it did: a match response
+        enumerates every feature the algorithm considered, including ones that
+        carried no signal (``0.0`` — a property the query didn't supply, or one
+        that doesn't apply to the schema). Those are noise in an explanation.
+        Negative features (penalties) are kept; only exact zeros are dropped.
+        ``explanations`` is left intact for callers that want the full set.
+        """
+        return {name: f for name, f in self.explanations.items() if f.score}
+
 
 class MatchResponse(BaseModel):
     """Flat response for ``/match``.

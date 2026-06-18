@@ -54,8 +54,9 @@ def shape_entity(entity: Entity, *, properties: tuple[str, ...] = KEY_PROPERTIES
 def shape_scored(entity: ScoredEntity) -> dict[str, Any]:
     """Return a trimmed dict for a match candidate, with score and explanation.
 
-    Adds ``score`` / ``match`` and a compact summary of the top contributing
-    features (by score) rather than the full ``explanations`` tree.
+    Adds ``score`` / ``match`` and a compact summary of the most influential
+    contributing features (by absolute score; zero-score features dropped)
+    rather than the full ``explanations`` tree.
     """
     shaped = shape_entity(entity)
     shaped["score"] = entity.score
@@ -75,6 +76,16 @@ def _string_properties(entity: Entity, names: tuple[str, ...]) -> dict[str, list
 
 
 def _top_explanations(entity: ScoredEntity) -> dict[str, float]:
-    """Return the highest-scoring features, feature name → score."""
-    ranked = sorted(entity.explanations.items(), key=lambda kv: kv[1].score, reverse=True)
+    """Return the most influential contributing features, name → score.
+
+    Drops non-contributing (zero-score) features via the SDK's
+    ``contributing_explanations`` and ranks by *absolute* score, so a strong
+    negative penalty surfaces alongside strong positive evidence rather than
+    sinking to the bottom.
+    """
+    ranked = sorted(
+        entity.contributing_explanations.items(),
+        key=lambda kv: abs(kv[1].score),
+        reverse=True,
+    )
     return {name: feature.score for name, feature in ranked[:_EXPLANATION_LIMIT]}

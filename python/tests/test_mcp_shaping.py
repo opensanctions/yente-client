@@ -99,6 +99,25 @@ def test_shape_scored_caps_and_ranks_explanations() -> None:
         },
     )
     explanation = shape_scored(scored)["explanation"]
-    # top 3 by score, highest first; the 0.1 feature is dropped
+    # top 3 by magnitude, highest first; the 0.1 feature is dropped
     assert list(explanation) == ["b", "d", "c"]
     assert "a" not in explanation
+
+
+def test_shape_scored_drops_zero_and_ranks_by_magnitude() -> None:
+    scored = ScoredEntity(
+        id="Q1",
+        caption="x",
+        schema="Person",
+        score=0.4,
+        match=False,
+        explanations={
+            "name_match": FeatureResult(score=0.6),
+            "dob_disjoint": FeatureResult(score=-0.95),  # strong penalty
+            "not_applicable": FeatureResult(score=0.0),  # no signal
+        },
+    )
+    explanation = shape_scored(scored)["explanation"]
+    assert "not_applicable" not in explanation  # zero dropped
+    assert list(explanation) == ["dob_disjoint", "name_match"]  # ranked by |score|
+    assert explanation["dob_disjoint"] == -0.95  # negative preserved
