@@ -24,11 +24,12 @@ def test_schema_index_is_only_matchable() -> None:
 
 def test_schema_index_entry_is_compact() -> None:
     person = next(s for s in introspect.schema_index() if s["name"] == "Person")
-    assert person["label"]
-    assert person["plural"]
-    assert "LegalEntity" in person["parents"]
+    assert "LegalEntity" in person["extends"]
     # The index stays a map: per-property detail is describe_schema's job.
     assert "properties" not in person
+    # Structural cruft is dropped.
+    assert "label" not in person
+    assert "plural" not in person
 
 
 def test_schema_index_has_a_sane_lower_bound() -> None:

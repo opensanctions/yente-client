@@ -36,11 +36,13 @@ from yente_client.exceptions import (
 )
 from yente_client.models import DataCoverage, DataPublisher, Dataset, Entity
 from yente_client.schemas import (
+    describe_schema,
     has_schema,
     is_matchable_schema,
     iter_properties,
     matchable_schemata,
     model,
+    schema_index,
 )
 
 _FORMAT_HELP = "Output format. `auto` (default) renders a table on a TTY and JSON when piped."
@@ -899,22 +901,7 @@ def ref_schemas_command(
     values you can pass to `match` or `search`. For details on one schema,
     run ``ref schema NAME``.
     """
-    schemata = model["schemata"]
-    entries: list[dict[str, Any]] = []
-    for name in sorted(schemata):
-        defn = schemata[name]
-        if matchable_only and not defn.get("matchable"):
-            continue
-        entries.append(
-            {
-                "name": name,
-                "label": defn.get("label", ""),
-                "matchable": bool(defn.get("matchable", False)),
-                "abstract": bool(defn.get("abstract", False)),
-                "extends": list(defn.get("extends") or []),
-                "description": (defn.get("description") or "").strip(),
-            }
-        )
+    entries = schema_index(matchable_only=matchable_only)
 
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
@@ -925,10 +912,10 @@ def ref_schemas_command(
         rows = [
             [
                 e["name"],
-                "✓" if e["matchable"] else "",
-                "abstract" if e["abstract"] else "",
-                ", ".join(e["extends"]),
-                _truncate(e["description"], 60),
+                "✓" if e.get("matchable") else "",
+                "edge" if e.get("edge") else "",
+                ", ".join(e.get("extends", [])),
+                _truncate(e.get("description", ""), 60),
             ]
             for e in entries
         ]
@@ -959,21 +946,8 @@ def ref_schema_command(
         )
         raise typer.Exit(code=2)
 
-    schemata = model["schemata"]
-    defn = schemata[name]
-    properties = _collect_schema_properties(name)
-    summary: dict[str, Any] = {
-        "name": name,
-        "label": defn.get("label", ""),
-        "description": (defn.get("description") or "").strip(),
-        "matchable": bool(defn.get("matchable", False)),
-        "abstract": bool(defn.get("abstract", False)),
-        "extends": list(defn.get("extends") or []),
-        "schemata": list(defn.get("schemata") or []),
-        "featured": list(defn.get("featured") or []),
-        "required": list(defn.get("required") or []),
-        "properties": properties,
-    }
+    summary = describe_schema(name)
+    properties = summary["properties"]
 
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
@@ -982,28 +956,28 @@ def ref_schema_command(
         # One property per line — useful for agents iterating over the prop list.
         print_jsonl(properties)
     else:
-        typer.echo(f"{name}  ({defn.get('label', '')})")
-        if summary["description"]:
+        typer.echo(name)
+        if summary.get("description"):
             typer.echo(summary["description"])
         typer.echo("")
-        typer.echo(f"  matchable:  {'yes' if summary['matchable'] else 'no'}")
-        typer.echo(f"  extends:    {', '.join(summary['extends']) or '(none)'}")
-        typer.echo(f"  featured:   {', '.join(summary['featured']) or '(none)'}")
-        typer.echo(f"  required:   {', '.join(summary['required']) or '(none)'}")
+        typer.echo(f"  matchable:  {'yes' if summary.get('matchable') else 'no'}")
+        typer.echo(f"  extends:    {', '.join(summary.get('extends', [])) or '(none)'}")
+        typer.echo(f"  featured:   {', '.join(summary.get('featured', [])) or '(none)'}")
+        if summary.get("edge"):
+            typer.echo("  edge:       yes")
         typer.echo("")
         rows = [
             [
                 p["name"],
                 p["type"],
-                "✓" if p["matchable"] else "",
-                "deprecated" if p["deprecated"] else "",
-                _truncate(p["description"], 50),
+                "✓" if p.get("matchable") else "",
+                _truncate(p.get("description", ""), 50),
             ]
             for p in properties
         ]
         print_table(
             rows,
-            headers=["property", "type", "matchable", "flags", "description"],
+            headers=["property", "type", "matchable", "description"],
             title=f"{len(properties)} property/properties (own + inherited)",
         )
         typer.echo("")
@@ -1015,50 +989,6 @@ def ref_schema_command(
             "lastName, weakAlias, gender, ...) feed dedicated matcher features and score just"
         )
         typer.echo("as directly as matchable ones — through different code paths.")
-
-
-def _collect_schema_properties(name: str) -> list[dict[str, Any]]:
-    """Walk the ancestor chain and return one row per property name.
-
-    Mirrors ``scripts/regen_model.py``'s ``collect_properties`` shape so the
-    `ref schema` view matches what the codegen would generate. Stub
-    properties (reverse edges) are excluded — they're navigation-only.
-
-    Each row's ``matchable`` field resolves the FtM model's per-property
-    flag with type-level defaulting (``prop.matchable`` when set, else
-    ``type.matchable``). This flag governs one specific path through the
-    matcher (whether the property value is used as a candidate-filter
-    clause); non-matchable properties still drive scoring through other
-    paths (name reconstruction, alias cross-comparison, dedicated
-    mismatch features). Don't treat the flag as "useful for matching".
-    """
-    schemata = model["schemata"]
-    types = model.get("types", {})
-    seen: set[str] = set()
-    rows: list[dict[str, Any]] = []
-    for ancestor in schemata[name].get("schemata", [name]):
-        anc_props = schemata.get(ancestor, {}).get("properties", {})
-        for prop_name, prop_def in anc_props.items():
-            if prop_name in seen or prop_def.get("stub"):
-                continue
-            seen.add(prop_name)
-            prop_matchable = prop_def.get("matchable")
-            if prop_matchable is None:
-                type_def = types.get(prop_def.get("type", ""), {})
-                prop_matchable = type_def.get("matchable")
-            rows.append(
-                {
-                    "name": prop_name,
-                    "type": prop_def.get("type", "string"),
-                    "label": prop_def.get("label", ""),
-                    "description": (prop_def.get("description") or "").strip(),
-                    "deprecated": bool(prop_def.get("deprecated", False)),
-                    "matchable": bool(prop_matchable),
-                    "from_schema": ancestor,
-                }
-            )
-    rows.sort(key=lambda r: r["name"])
-    return rows
 
 
 def ref_topics_command(

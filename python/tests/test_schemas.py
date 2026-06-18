@@ -1,11 +1,14 @@
 import pytest
 
 from yente_client.schemas import (
+    describe_schema,
     has_schema,
     is_a,
     is_deprecated,
     iter_properties,
     model,
+    schema_index,
+    schema_properties,
 )
 
 
@@ -97,3 +100,59 @@ def test_is_deprecated_unknown_schema_raises() -> None:
 def test_is_deprecated_unknown_property_raises() -> None:
     with pytest.raises(KeyError):
         is_deprecated("Person", "noSuchProperty")
+
+
+# ---------- canonical model projection (shared by MCP + CLI) ----------
+
+
+def test_describe_schema_keeps_signal_drops_cruft() -> None:
+    person = describe_schema("Person")
+    assert person["name"] == "Person"
+    assert person["matchable"] is True
+    assert "LegalEntity" in person["extends"]
+    assert person["properties"]
+    # structural cruft dropped
+    assert "label" not in person
+    assert "plural" not in person
+    assert "schemata" not in person  # flattened closure dropped; extends covers it
+
+
+def test_describe_schema_property_field_policy() -> None:
+    props = {p["name"]: p for p in describe_schema("Person")["properties"]}
+    bd = props["birthDate"]
+    assert bd["type"] == "date"
+    assert bd["matchable"] is True
+    for dropped in ("maxLength", "qname", "deprecated", "stub", "hidden", "format"):
+        assert dropped not in bd
+
+
+def test_schema_properties_excludes_stubs() -> None:
+    names = {p["name"] for p in schema_properties("Person")}
+    assert "birthDate" in names
+    assert "images" not in names  # stub (reverse edge)
+
+
+def test_property_matchable_resolves_type_default() -> None:
+    props = {p["name"]: p for p in schema_properties("Person")}
+    assert props["birthDate"]["matchable"] is True
+    assert props["citizenship"]["matchable"] is True  # via the country type
+    assert props["firstName"]["matchable"] is False
+
+
+def test_empty_values_are_omitted() -> None:
+    props = {p["name"]: p for p in schema_properties("Person")}
+    # birthDate has no description and isn't entity-typed -> those keys absent
+    assert "range" not in props["birthDate"]
+    assert "reverse" not in props["birthDate"]
+    # an entity-typed property keeps range/reverse
+    owner = {p["name"]: p for p in schema_properties("Ownership")}["owner"]
+    assert owner["range"] == "LegalEntity"
+    assert owner["reverse"] == "ownershipOwner"
+
+
+def test_schema_index_matchable_only_is_summaries() -> None:
+    idx = schema_index(matchable_only=True)
+    names = {s["name"] for s in idx}
+    assert "Person" in names
+    assert all("properties" not in s for s in idx)  # summaries, no property list
+    assert len(schema_index()) > len(idx)  # full index lists more

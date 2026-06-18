@@ -16,68 +16,40 @@ derived from the model at call time.
 
 from typing import Any
 
-from yente_client.schemas import (
-    has_schema,
-    is_matchable_schema,
-    matchable_schemata,
-    model,
-)
+from yente_client import schemas
+from yente_client.schemas import has_schema, model
 
 
 def schema_index() -> list[dict[str, Any]]:
     """Return the matchable-schema index — the map an agent reads first.
 
-    One compact entry per matchable schema (the only ones usable as a
-    ``match_entity`` target): name, label, plural, parent schemata, and
-    description. Property detail is intentionally omitted; fetch it per-schema
-    via :func:`describe_schema` so the whole model is never dumped at once.
+    One compact summary per matchable schema (the only ones usable as a
+    ``match_entity`` target). Property detail is intentionally omitted; fetch it
+    per-schema via :func:`describe_schema` so the whole model is never dumped at
+    once. Projection (which fields, descriptions kept, cruft dropped) is the
+    SDK's :func:`yente_client.schemas.schema_index`, shared with the CLI.
     """
-    out: list[dict[str, Any]] = []
-    for name in matchable_schemata():
-        defn = model["schemata"][name]
-        out.append(
-            {
-                "name": name,
-                "label": defn.get("label"),
-                "plural": defn.get("plural"),
-                "parents": defn.get("extends", []),
-                "description": defn.get("description"),
-            }
-        )
-    return out
+    return schemas.schema_index(matchable_only=True)
 
 
 def describe_schema(name: str) -> dict[str, Any]:
-    """Return full property detail for one schema.
+    """Return the projected detail for one schema (header + usable properties).
 
-    The workhorse behind the ``describe_schema`` tool: for every property an
-    agent could send (own + inherited), what it's called, its value type, and
-    whether it routes through the matcher's candidate filter. Entity-typed
-    properties also carry ``range`` (what they point to) and ``reverse`` (the
-    property name to use with ``fetch_entity_relations``).
+    Each property carries its name, type, and whether it routes through the
+    matcher's candidate filter (`matchable`), plus `range`/`reverse` for
+    entity-typed properties. Surfaces the `matchable` flag without
+    editorializing — non-matchable properties (`firstName`, `weakAlias`, …) still
+    feed scoring, so the rule for callers is "send every property you have."
 
-    Surfaces the per-property ``matchable`` flag but does not editorialize on
-    it: non-matchable properties (``firstName``, ``weakAlias``, …) still feed
-    scoring, so the rule for callers is "send every property you have."
+    Delegates the projection to :func:`yente_client.schemas.describe_schema`
+    (shared with the CLI); only the friendly error is MCP-specific.
 
     Raises:
         ValueError: if ``name`` is not a schema in the bundled model.
     """
     if not has_schema(name):
         raise ValueError(f"Unknown FtM schema {name!r}. Call describe_schema() for the index.")
-
-    defn = model["schemata"][name]
-    properties = [_property_view(pname, pdef) for pname, pdef in _flatten_properties(name).items()]
-    properties.sort(key=lambda p: p["name"])
-    return {
-        "name": name,
-        "label": defn.get("label"),
-        "plural": defn.get("plural"),
-        "matchable": is_matchable_schema(name),
-        "parents": defn.get("extends", []),
-        "description": defn.get("description"),
-        "properties": properties,
-    }
+    return schemas.describe_schema(name)
 
 
 def topic_values() -> dict[str, str]:
@@ -93,38 +65,6 @@ def country_values() -> dict[str, str]:
 def gender_values() -> dict[str, str]:
     """Return the ``gender`` vocabulary (value → label)."""
     return _type_values("gender")
-
-
-def _flatten_properties(schema: str) -> dict[str, dict[str, Any]]:
-    """Collect ``{property_name: definition}`` for a schema, own + inherited.
-
-    ``model.json`` stores own-properties per schema; this walks the
-    pre-flattened ancestor list (first definition wins) to mirror
-    :func:`yente_client.schemas.iter_properties` while keeping the defs.
-    """
-    seen: dict[str, dict[str, Any]] = {}
-    for ancestor in model["schemata"][schema]["schemata"]:
-        ancestor_props = model["schemata"].get(ancestor, {}).get("properties", {})
-        for pname, pdef in ancestor_props.items():
-            if pname not in seen:
-                seen[pname] = pdef
-    return seen
-
-
-def _property_view(name: str, defn: dict[str, Any]) -> dict[str, Any]:
-    """Project one property definition into the compact view the tool returns."""
-    view: dict[str, Any] = {
-        "name": name,
-        "label": defn.get("label"),
-        "type": defn.get("type"),
-        "matchable": bool(defn.get("matchable", False)),
-    }
-    if defn.get("description"):
-        view["description"] = defn["description"]
-    if defn.get("type") == "entity":
-        view["range"] = defn.get("range")
-        view["reverse"] = defn.get("reverse")
-    return view
 
 
 def _type_values(type_name: str) -> dict[str, str]:

@@ -10,6 +10,19 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`schemas.describe_schema()` / `schema_index()` / `schema_properties()` /
+  `property_matchable()`** — a shared, condensed FtM model projection used by
+  both `yente-cli ref` and the MCP `describe_schema`. Keeps the high-signal
+  fields (descriptions, `matchable`, `extends`, `range`/`reverse`) and drops
+  structural cruft (`label`/`plural`/flattened ancestor closure on schemata;
+  `maxLength`/`qname`/`deprecated`/`format` on properties), omits empty values,
+  and resolves per-property `matchable` with the FtM type default.
+
+### Changed
+
+- `yente-cli ref schemas` / `ref schema NAME` output is leaner (the projection
+  above): the `abstract`/`required`/`deprecated` columns/fields are gone.
+
 - **MCP server** (`yente-mcp`, `pip install 'yente-client[mcp]'`): exposes the
   matching surface to LLM agents over the Model Context Protocol as five tools
   (`match_entity`, `search_entities`, `fetch_entity_by_id`,

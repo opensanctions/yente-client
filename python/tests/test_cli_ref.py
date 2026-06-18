@@ -80,10 +80,12 @@ def test_ref_schema_excludes_stubs(runner) -> None:
     assert "associates" not in prop_names
 
 
-def test_ref_schema_marks_deprecated(runner) -> None:
+def test_ref_schema_omits_deprecated_field(runner) -> None:
+    """The `deprecated` field is intentionally dropped from the projection; the
+    (deprecated) property itself still appears, consistent with the codegen."""
     summary = json.loads(runner.invoke(app, ["ref", "schema", "Person", "-f", "json"]).stdout)
     second_name = next(p for p in summary["properties"] if p["name"] == "secondName")
-    assert second_name["deprecated"] is True
+    assert "deprecated" not in second_name
 
 
 def test_ref_schema_property_matchable_resolves_type_defaults(runner) -> None:
