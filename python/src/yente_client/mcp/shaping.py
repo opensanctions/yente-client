@@ -11,7 +11,12 @@ Pure functions over the SDK response models — no FastMCP, unit-testable.
 
 from typing import Any
 
-from yente_client.models import Entity, ScoredEntity
+from yente_client.models import (
+    AdjacentPropertyResponse,
+    AdjacentResponse,
+    Entity,
+    ScoredEntity,
+)
 
 # Properties worth showing in a trimmed hit. Names that don't exist on a given
 # schema are simply skipped. `name` and `topics` are almost always wanted.
@@ -89,3 +94,57 @@ def _top_explanations(entity: ScoredEntity) -> dict[str, float]:
         reverse=True,
     )
     return {name: feature.score for name, feature in ranked[:_EXPLANATION_LIMIT]}
+
+
+def _stub(entity: Entity) -> dict[str, Any]:
+    """Minimal reference to an entity — enough to identify it and chain off its id."""
+    return {"id": entity.id, "caption": entity.caption, "schema": entity.schema_}
+
+
+def shape_edge(edge: Entity, source_id: str) -> dict[str, Any]:
+    """Project one adjacency edge (Sanction, Ownership, Family, …) for the relations view.
+
+    Edge entities carry no useful caption (it's just the schema name) — the
+    signal is in their properties. So instead of stubbing, this keeps the edge
+    whole with two changes: the back-reference to the source entity is dropped
+    (redundant — the caller already has it), and the *counterparty* (the other
+    endpoint, e.g. an Ownership's `asset`) is resolved to an `{id, caption,
+    schema}` stub. Everything else is kept verbatim — edge attributes,
+    `datasets` provenance, and prose (`reason`, `notes`), which is the screening
+    signal. The size lever is the caller's `limit`, not field-stripping.
+    """
+    rec: dict[str, Any] = {"id": edge.id, "schema": edge.schema_}
+    if edge.datasets:
+        rec["datasets"] = edge.datasets
+    props: dict[str, Any] = {}
+    for name, values in edge.properties.items():
+        nested = [v for v in values if isinstance(v, Entity)]
+        if nested:
+            props[name] = [_stub(v) for v in nested]
+            continue
+        strings = [v for v in values if isinstance(v, str)]
+        if not strings or strings == [source_id]:  # absent, or the back-ref to source
+            continue
+        props[name] = strings
+    rec["properties"] = props
+    return rec
+
+
+def shape_adjacency_property(block: AdjacentPropertyResponse, source_id: str) -> dict[str, Any]:
+    """Shape one edge type's paginated results: counts + projected edges."""
+    return {
+        "total": block.total.value,
+        "limit": block.limit,
+        "offset": block.offset,
+        "results": [
+            shape_edge(e, source_id) if isinstance(e, Entity) else {"id": e} for e in block.results
+        ],
+    }
+
+
+def shape_adjacency(resp: AdjacentResponse) -> dict[str, Any]:
+    """Shape the all-edge-types overview: a map of edge type → counts + projected edges."""
+    source_id = resp.entity.id
+    return {
+        prop: shape_adjacency_property(block, source_id) for prop, block in resp.adjacent.items()
+    }

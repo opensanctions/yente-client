@@ -24,7 +24,6 @@ from yente_client.mcp import introspect, shaping
 from yente_client.mcp._deps import FastMCP, ToolError, get_http_headers
 from yente_client.mcp.auth import client_for, resolve_api_key
 from yente_client.mcp.errors import describe_error
-from yente_client.models import AdjacentPropertyResponse, AdjacentResponse
 
 BASE_URL = env.base_url()
 # Fallback API key for the whole server, used when a request carries no bearer
@@ -148,18 +147,21 @@ async def search_entities(
 
 
 @mcp.tool
-async def fetch_entity_by_id(entity_id: str, *, nested: bool = True) -> dict[str, Any]:
-    """Fetch one entity by its OpenSanctions ID, with full nested detail.
+async def fetch_entity_by_id(entity_id: str) -> dict[str, Any]:
+    """Fetch one entity by its OpenSanctions ID — its full own record.
 
-    Use to expand a candidate from match_entity / search_entities. Needs a real
-    entity ID — not a name (use match_entity / search_entities for names).
+    Returns the entity and all its intrinsic properties (names, dates,
+    identifiers, addresses, …). Relationships (sanctions, ownership, family) are
+    NOT here — traverse those with fetch_entity_relations. Use to expand a
+    candidate from match_entity / search_entities, or a counterparty id returned
+    by fetch_entity_relations. Needs a real entity ID, not a name.
     """
     client = _resolve_client()
     try:
-        entity = await client.fetch(entity_id, nested=nested)
+        entity = await client.fetch(entity_id, nested=False)
     except YenteError as exc:
         raise ToolError(describe_error(exc)) from exc
-    # The detail tool: return the full entity, not a trimmed view.
+    # The detail tool: return the full node, not a trimmed view.
     return entity.model_dump(by_alias=True, mode="json", exclude_none=True)
 
 
@@ -168,25 +170,28 @@ async def fetch_entity_relations(
     entity_id: str,
     *,
     prop: str | None = None,
-    limit: int | None = None,
+    limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Traverse the relationship graph around an entity (owners, directors, family).
+    """Traverse an entity's relationship graph — sanctions, owners, directors, family.
 
-    Omit `prop` for all relationships, or pass one (e.g. "ownershipOwner") for a
-    single edge type — see describe_schema for an entity-typed property's
-    `reverse` value. Beta; shape may change.
+    Call with no `prop` first for an overview: every edge type with its total
+    count and a capped first page. Then pass a `prop` ("sanctions",
+    "ownershipOwner", "directorshipDirector", …) to walk one type, paging large
+    "hub" nodes with `limit` / `offset`. Each result is the edge with its
+    counterparty resolved to {id, caption, schema}; call fetch_entity_by_id on
+    that id for the counterparty's full record. Prop names come from this tool's
+    overview keys or from describe_schema. Beta; shape may change.
     """
     client = _resolve_client()
-    resp: AdjacentResponse | AdjacentPropertyResponse
     try:
         if prop is None:
-            resp = await client.adjacent(entity_id, limit=limit, offset=offset)
-        else:
-            resp = await client.adjacent(entity_id, prop=prop, limit=limit, offset=offset)
+            overview = await client.adjacent(entity_id, limit=limit, offset=offset)
+            return shaping.shape_adjacency(overview)
+        block = await client.adjacent(entity_id, prop=prop, limit=limit, offset=offset)
+        return shaping.shape_adjacency_property(block, entity_id)
     except YenteError as exc:
         raise ToolError(describe_error(exc)) from exc
-    return resp.model_dump(by_alias=True, mode="json", exclude_none=True)
 
 
 @mcp.tool

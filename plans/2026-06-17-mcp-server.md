@@ -142,26 +142,34 @@ This phrasing is lifted from the SDK's "search vs match" policy
 input. Inputs: `q`, `dataset`, `schema`, `countries`, `topics`, `limit`,
 `offset`, `fuzzy`, `simple`. Returns `SearchResponse`.
 
-### `fetch_entity_by_id` → `AsyncClient.fetch(entity_id, nested=True)`
+### `fetch_entity_by_id` → `AsyncClient.fetch(entity_id, nested=False)`
 
-> Fetch one entity by its OpenSanctions ID, including nested detail (sanctions,
-> identifiers, addresses, relatives). Use to expand a candidate returned by
-> `match_entity` or `search_entities` into full context.
+> Fetch one entity by its OpenSanctions ID — its full own record (names, dates,
+> identifiers, addresses). Relationships are NOT here; traverse them with
+> `fetch_entity_relations`.
 
-The 308 entity-merge redirect is the SDK's concern, not the MCP's — another
-benefit of building on the client. (Action item: confirm `AsyncClient.fetch`
-follows merges to the canonical entity; if it surfaces a redirect/error, fix it
-in the SDK so every consumer benefits.) Returns `Entity`.
+**Node-only by design.** `nested` is *not* exposed: `nested=true` inlines the
+entire graph (~200 KB for a major POI), unpaginated and self-duplicating — the
+firehose that broke an agent in testing. With relations as the paginated graph
+tool, `nested=true` is strictly worse, so the MCP doesn't offer it (the SDK keeps
+it for other callers). `nested=false` is also exactly the shape `match_entity`
+returns — consistent node representation everywhere. ~17 KB. Returns the full
+node (not trimmed). The 308 merge-redirect is the SDK's concern.
 
 ### `fetch_entity_relations` → `AsyncClient.adjacent(entity_id, prop=, ...)` — Beta
 
-> Traverse the relationship graph around an entity: owners, subsidiaries,
-> associates, directorships, family. Paginated, for following ownership/control
-> chains across multiple hops. Beta — shape may change.
+> Traverse the relationship graph — sanctions, owners, directors, family.
+> No `prop` → overview of every edge type with counts + a capped first page; a
+> `prop` → one type, paged with `limit`/`offset` for hub nodes.
 
-Inputs: `entity_id`, optional `prop` (`"ownershipOwner"`,
-`"directorshipDirector"`, …), `limit`, `offset`, `sort`. Returns
-`AdjacentResponse` (all props) or `AdjacentPropertyResponse` (single prop).
+Inputs: `entity_id`, `prop=None`, `limit=50`, `offset=0`. Output is **edge
+projections**, not `{id,caption,schema}` stubs — edge entities (Sanction,
+Ownership, …) have no useful caption, so each result keeps the edge whole minus
+two changes: the back-ref to the source is dropped, and the *counterparty* (e.g.
+an Ownership's `asset`) is resolved to a stub. Everything else is kept —
+attributes, `datasets` provenance, and prose (`reason`/`notes`, the screening
+signal). Size is bounded by `limit`, not field-stripping. Per-type
+`{total, limit, offset}`. Expand a counterparty via `fetch_entity_by_id`.
 
 ### `describe_schema` → bundled FtM model (no server call)
 
@@ -424,17 +432,17 @@ agent needs to justify a decision" — keep it structured, do **not** flatten it
 1. **Error semantics — fixed** (see above). Outstanding nicety: a cheap
    health/capabilities probe so an agent can check liveness before an expensive
    call.
-2. **Lighter retrieval default (highest-value follow-up).** `fetch_entity_by_id`
-   with `nested=true` (the default) inlines the *entire* graph — ~200 KB for a
-   major POI — which (a) makes `fetch_entity_relations` largely redundant (the
-   graph is already inlined) and (b) self-duplicates: the same entity's full
-   multilingual notes reappear under every edge that points to it, with no
-   total-count or truncation signal. Proposed **stub/expand** shape: edges
-   resolve to `{id, caption, schema, role}` by default, the agent expands a
-   specific edge on demand; add per-property edge counts + a truncation flag.
-   This is the workflow agents reach for (cheap graph → targeted detail) and
-   subsumes the dedup problem. Likely makes `nested=true` non-default and
-   documents its cost.
+2. **Lighter retrieval default — done.** `fetch_entity_by_id` used to inline the
+   *entire* graph (~200 KB, unpaginated, self-duplicating). Fixed by splitting
+   roles: `fetch_entity_by_id` is now node-only (~17 KB, `nested` not exposed),
+   and `fetch_entity_relations` is the paginated graph tool — overview-with-counts
+   when called bare, one edge type paged when given a `prop`. We confirmed
+   `nested=false` can't serve cheap edge *stubs* (it drops edges entirely), and
+   that edge entities have no useful caption, so relations returns **edge
+   projections** (back-ref dropped, counterparty stubbed, attributes + prose +
+   `datasets` kept) bounded by `limit=50`. Per-edge-type `{total, limit, offset}`
+   gives the count/truncation signal. Per-edge-type querying also avoids the
+   self-duplication (which came from the whole-graph inline).
 3. **Markdown rendering (presentation layer, only after #2).** Keep
    `match_entity` structured. For `fetch`/`relations`, a hybrid: markdown body +
    an **edge table** (the single biggest readability win), with IDs kept
@@ -444,10 +452,11 @@ agent needs to justify a decision" — keep it structured, do **not** flatten it
    principled and reusable. Caveat: markdown is lossy on adversarial data
    (pipes / newlines in transliterated names) — escape hard, keep ambiguous bits
    structured.
-4. **Smaller:** drop zero-scored features from the `match_entity` explanation
-   summary (`shaping._top_explanations`); `caption` mojibake (CP1251
-   double-encode) is upstream data, best normalized at the API/SDK boundary so
-   every consumer doesn't re-solve it (SDK concern, not MCP).
+4. **Smaller:** zero-scored features now dropped from the `match_entity`
+   explanation (done — via `ScoredEntity.contributing_explanations`, ranked by
+   `abs(score)`). Still open: `caption` mojibake (CP1251 double-encode) is
+   upstream data, best normalized at the API/SDK boundary so every consumer
+   doesn't re-solve it (SDK concern, not MCP).
 
 ## Open questions
 

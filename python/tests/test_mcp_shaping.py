@@ -3,8 +3,21 @@
 Pure functions over the SDK response models — no network, no FastMCP.
 """
 
-from yente_client.mcp.shaping import shape_entity, shape_scored
-from yente_client.models import Entity, FeatureResult, ScoredEntity
+from yente_client.mcp.shaping import (
+    shape_adjacency,
+    shape_adjacency_property,
+    shape_edge,
+    shape_entity,
+    shape_scored,
+)
+from yente_client.models import (
+    AdjacentPropertyResponse,
+    AdjacentResponse,
+    Entity,
+    FeatureResult,
+    ScoredEntity,
+    TotalSpec,
+)
 
 
 def test_shape_entity_keeps_core_identity_fields() -> None:
@@ -121,3 +134,79 @@ def test_shape_scored_drops_zero_and_ranks_by_magnitude() -> None:
     assert "not_applicable" not in explanation  # zero dropped
     assert list(explanation) == ["dob_disjoint", "name_match"]  # ranked by |score|
     assert explanation["dob_disjoint"] == -0.95  # negative preserved
+
+
+def test_shape_edge_drops_backref_stubs_counterparty_keeps_attrs() -> None:
+    asset = Entity(id="c1", caption="ACME Ltd", schema="Company")
+    edge = Entity(
+        id="own1",
+        caption="Ownership",  # useless caption — why we don't stub edges
+        schema="Ownership",
+        datasets=["ext_ru_egrul"],
+        properties={
+            "owner": ["P1"],  # back-ref to the source
+            "asset": [asset],  # counterparty
+            "percentage": ["100"],
+            "startDate": ["2019-01-01"],
+        },
+    )
+    rec = shape_edge(edge, "P1")
+    assert rec["id"] == "own1"
+    assert rec["schema"] == "Ownership"
+    assert rec["datasets"] == ["ext_ru_egrul"]  # provenance kept
+    assert "owner" not in rec["properties"]  # back-ref dropped
+    assert rec["properties"]["asset"] == [{"id": "c1", "caption": "ACME Ltd", "schema": "Company"}]
+    assert rec["properties"]["percentage"] == ["100"]  # attrs kept as lists
+
+
+def test_shape_edge_keeps_prose() -> None:
+    edge = Entity(
+        id="s1",
+        caption="Sanction",
+        schema="Sanction",
+        properties={"entity": ["P1"], "reason": ["sanctioned because X"], "authority": ["OFAC"]},
+    )
+    rec = shape_edge(edge, "P1")
+    assert "entity" not in rec["properties"]  # back-ref dropped
+    assert rec["properties"]["reason"] == ["sanctioned because X"]  # prose kept
+    assert rec["properties"]["authority"] == ["OFAC"]
+
+
+def test_shape_adjacency_keys_by_edge_type_with_counts() -> None:
+    src = Entity(id="P1", caption="Jane", schema="Person")
+    asset = Entity(id="c1", caption="ACME", schema="Company")
+    edge = Entity(
+        id="own1",
+        caption="Ownership",
+        schema="Ownership",
+        properties={"owner": ["P1"], "asset": [asset]},
+    )
+    resp = AdjacentResponse(
+        entity=src,
+        adjacent={
+            "ownershipOwner": AdjacentPropertyResponse(
+                results=[edge], total=TotalSpec(value=29, relation="eq"), limit=50, offset=0
+            )
+        },
+    )
+    out = shape_adjacency(resp)
+    assert set(out) == {"ownershipOwner"}
+    block = out["ownershipOwner"]
+    assert (block["total"], block["limit"], block["offset"]) == (29, 50, 0)
+    assert block["results"][0]["properties"]["asset"][0]["caption"] == "ACME"
+
+
+def test_shape_adjacency_property_shapes_results() -> None:
+    edge = Entity(
+        id="s1",
+        caption="Sanction",
+        schema="Sanction",
+        properties={"entity": ["P1"], "authority": ["OFAC"]},
+    )
+    block = AdjacentPropertyResponse(
+        results=[edge], total=TotalSpec(value=21, relation="eq"), limit=50, offset=0
+    )
+    out = shape_adjacency_property(block, "P1")
+    assert out["total"] == 21
+    assert out["results"][0]["properties"]["authority"] == ["OFAC"]
+    assert "entity" not in out["results"][0]["properties"]
