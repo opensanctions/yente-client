@@ -4,6 +4,7 @@ Pure functions over the SDK response models — no network, no FastMCP.
 """
 
 from yente_client.mcp.shaping import (
+    dataset_index,
     shape_adjacency,
     shape_adjacency_property,
     shape_edge,
@@ -13,6 +14,8 @@ from yente_client.mcp.shaping import (
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
+    Dataset,
+    DatasetsResponse,
     Entity,
     FeatureResult,
     ScoredEntity,
@@ -194,6 +197,49 @@ def test_shape_adjacency_keys_by_edge_type_with_counts() -> None:
     block = out["ownershipOwner"]
     assert (block["total"], block["limit"], block["offset"]) == (29, 50, 0)
     assert block["results"][0]["properties"]["asset"][0]["caption"] == "ACME"
+
+
+def test_shape_adjacency_drops_riskSource_phantom_edge() -> None:
+    src = Entity(id="P1", caption="Jane", schema="Person")
+    resp = AdjacentResponse(
+        entity=src,
+        adjacent={
+            "ownershipOwner": AdjacentPropertyResponse(
+                results=[], total=TotalSpec(value=2, relation="eq"), limit=50, offset=0
+            ),
+            # Reports a count but resolves no entities — must be suppressed.
+            "riskSource": AdjacentPropertyResponse(
+                results=[], total=TotalSpec(value=33, relation="eq"), limit=50, offset=0
+            ),
+        },
+    )
+    out = shape_adjacency(resp)
+    assert set(out) == {"ownershipOwner"}
+
+
+def test_dataset_index_projects_compact_fields() -> None:
+    resp = DatasetsResponse(
+        datasets=[
+            Dataset(
+                name="us_ofac_sdn",
+                title="OFAC Specially Designated Nationals",
+                tags=["list.sanction"],
+                entity_count=12000,
+                summary="dropped from the index projection",
+            ),
+            Dataset(name="default", title="All datasets"),
+        ]
+    )
+    out = dataset_index(resp)
+    assert out[0] == {
+        "name": "us_ofac_sdn",
+        "title": "OFAC Specially Designated Nationals",
+        "tags": ["list.sanction"],
+        "entity_count": 12000,
+    }
+    assert out[1]["name"] == "default"
+    assert out[1]["tags"] == []
+    assert out[1]["entity_count"] is None
 
 
 def test_shape_adjacency_property_shapes_results() -> None:

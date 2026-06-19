@@ -9,6 +9,10 @@ Config (all overridable by flag): ``YENTE_MCP_TRANSPORT`` (http|stdio),
 forwards calls to), and ``OPENSANCTIONS_API_KEY`` (fallback key used when a
 request carries no bearer token) — the latter two read in
 :mod:`yente_client.mcp.server`.
+
+Branding for self-hosted deployments: ``YENTE_MCP_NAME`` and
+``YENTE_MCP_INSTRUCTIONS`` override the name and description advertised to MCP
+clients (default ``yente`` / the stock copy); resolved in :mod:`yente_client.env`.
 """
 
 import argparse

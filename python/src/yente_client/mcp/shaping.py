@@ -14,6 +14,7 @@ from typing import Any
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
+    DatasetsResponse,
     Entity,
     ScoredEntity,
 )
@@ -142,9 +143,35 @@ def shape_adjacency_property(block: AdjacentPropertyResponse, source_id: str) ->
     }
 
 
+# Relation props suppressed from the adjacency projection. `riskSource` is a
+# `Thing` entity property with no reverse: the adjacency endpoint reports a count
+# for it but resolves no counterparties — a phantom edge. An entity's risk basis
+# is read from its own record (topics / properties), not traversed as a relation.
+HIDDEN_RELATION_PROPS: frozenset[str] = frozenset({"riskSource"})
+
+
 def shape_adjacency(resp: AdjacentResponse) -> dict[str, Any]:
     """Shape the all-edge-types overview: a map of edge type → counts + projected edges."""
     source_id = resp.entity.id
     return {
-        prop: shape_adjacency_property(block, source_id) for prop, block in resp.adjacent.items()
+        prop: shape_adjacency_property(block, source_id)
+        for prop, block in resp.adjacent.items()
+        if prop not in HIDDEN_RELATION_PROPS
     }
+
+
+def dataset_index(resp: DatasetsResponse) -> list[dict[str, Any]]:
+    """Project the catalog to a compact name → title index for discovery.
+
+    The full per-dataset record (summary, publisher, coverage, counts) is fetched
+    on demand by name; this keeps the index cheap enough to scan in one call.
+    """
+    return [
+        {
+            "name": d.name,
+            "title": d.title,
+            "tags": d.tags,
+            "entity_count": d.entity_count,
+        }
+        for d in resp.datasets
+    ]

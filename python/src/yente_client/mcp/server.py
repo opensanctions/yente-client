@@ -1,11 +1,18 @@
-"""The FastMCP server: tool and resource wiring over the yente SDK.
+"""Expose OpenSanctions screening and investigation to MCP clients.
 
-Five tools — four thin adapters over :class:`yente_client.AsyncClient`
-(``match_entity``, ``search_entities``, ``fetch_entity_by_id``,
-``fetch_entity_relations``) plus ``describe_schema`` over the bundled FtM model —
-and five resources (static ``ftm://`` model views, live ``yente://`` server
-state). Each request carries the caller's API key as a bearer token, forwarded
-downstream (see :mod:`yente_client.mcp.auth`).
+Lets an assistant screen people, companies, and other entities against
+sanctions, PEP, and watchlist data and walk their relationships — the same
+matching surface as the yente SDK, framed for an analyst rather than a caller.
+
+Four thin adapters over :class:`yente_client.AsyncClient` (``match_entity``,
+``search_entities``, ``fetch_entity_by_id``, ``fetch_entity_relations``) plus a
+set of ``describe_*`` lookup tools: ``describe_schema``, ``describe_topics`` and
+``describe_countries`` over the bundled FtM model, ``describe_dataset`` over the
+live catalog. The ``ftm://schema`` resources mirror ``describe_schema`` for
+resource-capable clients; anything the model must dereference mid-conversation is
+a tool, not a resource, since clients don't reliably read resources. Each request
+carries the caller's API key as a bearer token, forwarded downstream (see
+:mod:`yente_client.mcp.auth`).
 
 Keep this module thin: the real logic lives in :mod:`~yente_client.mcp.introspect`
 and :mod:`~yente_client.mcp.shaping`. Anything beyond plumbing belongs there so
@@ -14,9 +21,11 @@ it stays testable without FastMCP.
 
 from typing import Any
 
+from mcp.types import Icon, ToolAnnotations
 from pydantic import ValidationError
 
 from yente_client import entities, env
+from yente_client._http import _client_version
 from yente_client.async_client import AsyncClient
 from yente_client.entities import EntityInput
 from yente_client.exceptions import YenteError
@@ -25,21 +34,42 @@ from yente_client.mcp._deps import FastMCP, ToolError, get_http_headers
 from yente_client.mcp.auth import client_for, resolve_api_key
 from yente_client.mcp.errors import describe_error
 
+# OpenSanctions brand mark, served as square PNGs from the public asset CDN.
+_ICON_BASE = "https://assets.opensanctions.org/images/nura"
+
+# Every tool here only reads (screens, searches, fetches, describes) — nothing
+# mutates server state — so they all share this read-only annotation.
+_READ_ONLY = ToolAnnotations(readOnlyHint=True)
+
+# Emitted alongside entity-bearing results so an agent *reading the output* — not
+# just one that happened to read describe_topics' description — is pushed to
+# resolve codes. Guards the observed failure mode: glossing a legible-looking code
+# (e.g. reading `crime.war` as generic crime) instead of resolving the vocabulary.
+_RESOLVE_CODES_NOTE = (
+    "Codes in these results are raw: resolve topic tags with describe_topics, "
+    "country codes with describe_countries, and dataset names with describe_dataset "
+    "before reporting them — even ones that look self-explanatory."
+)
+
 BASE_URL = env.base_url()
 # Fallback API key for the whole server, used when a request carries no bearer
 # token — lets you run yente-mcp locally against a real API for testing.
 API_KEY = env.api_key()
 
 mcp: FastMCP = FastMCP(
-    name="yente",
-    instructions=(
-        "Screen and research people, companies, and other entities against the "
-        "OpenSanctions database (sanctions lists, PEPs, watchlists). For any "
-        "match/no-match question — even from a partial record — use match_entity. "
-        "Use search_entities only to back a human-style search box. Call "
-        "describe_schema first to learn real FtM property names (birthDate, "
-        "registrationNumber) before building a match."
-    ),
+    # name and instructions default to "yente" / the stock copy, but a self-hosted
+    # deployment can rebrand both via $YENTE_MCP_NAME / $YENTE_MCP_INSTRUCTIONS.
+    name=env.mcp_name(),
+    version=_client_version(),
+    website_url="https://www.opensanctions.org",
+    icons=[
+        # Full-colour brand mark first (renders on any background), favicons as
+        # smaller fallbacks. Clients pick by `sizes`.
+        Icon(src=f"{_ICON_BASE}/logo-icon-color.png", mimeType="image/png", sizes=["290x310"]),
+        Icon(src=f"{_ICON_BASE}/favicon-32.png", mimeType="image/png", sizes=["32x32"]),
+        Icon(src=f"{_ICON_BASE}/favicon-16.png", mimeType="image/png", sizes=["16x16"]),
+    ],
+    instructions=env.mcp_instructions(),
 )
 
 
@@ -70,7 +100,7 @@ def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
 # ----- tools -----
 
 
-@mcp.tool
+@mcp.tool(title="Screen against watchlists", annotations=_READ_ONLY)
 async def match_entity(
     schema: str,
     properties: dict[str, list[str]],
@@ -87,6 +117,11 @@ async def match_entity(
     (Person, Company, ...) and `properties` maps FtM property names to value
     lists ({"name": ["Jane Doe"], "birthDate": ["1975"]}). Call describe_schema
     first if unsure of property names. Send every property you have.
+
+    Results carry raw codes — topic tags, country codes, dataset names. Resolve
+    them with describe_topics / describe_countries / describe_dataset before
+    reporting, even ones that look self-explanatory (`crime.war` is "War crimes",
+    not generic crime).
     """
     entity = _build_entity(schema, properties)
     client = _resolve_client()
@@ -105,10 +140,11 @@ async def match_entity(
         "query_schema": schema,
         "total": resp.total.value,
         "results": [shaping.shape_scored(r) for r in resp.results],
+        "note": _RESOLVE_CODES_NOTE,
     }
 
 
-@mcp.tool
+@mcp.tool(title="Search entities", annotations=_READ_ONLY)
 async def search_entities(
     q: str,
     *,
@@ -125,6 +161,9 @@ async def search_entities(
 
     Not a fallback for match_entity: for a match/no-match decision on a known
     person or company, use match_entity even with partial input.
+
+    Results carry raw codes (topics, countries, datasets); resolve them with the
+    describe_* tools before reporting, even ones that look self-explanatory.
     """
     client = _resolve_client()
     kwargs: dict[str, Any] = {"datasets": [dataset]}
@@ -143,10 +182,11 @@ async def search_entities(
     return {
         "total": resp.total.value,
         "results": [shaping.shape_entity(r) for r in resp.results],
+        "note": _RESOLVE_CODES_NOTE,
     }
 
 
-@mcp.tool
+@mcp.tool(title="Fetch entity by ID", annotations=_READ_ONLY)
 async def fetch_entity_by_id(entity_id: str) -> dict[str, Any]:
     """Fetch one entity by its OpenSanctions ID — its full own record.
 
@@ -165,7 +205,7 @@ async def fetch_entity_by_id(entity_id: str) -> dict[str, Any]:
     return entity.model_dump(by_alias=True, mode="json", exclude_none=True)
 
 
-@mcp.tool
+@mcp.tool(title="Fetch entity relations", annotations=_READ_ONLY)
 async def fetch_entity_relations(
     entity_id: str,
     *,
@@ -183,6 +223,12 @@ async def fetch_entity_relations(
     that id for the counterparty's full record. Prop names come from this tool's
     overview keys or from describe_schema. Beta; shape may change.
     """
+    if prop in shaping.HIDDEN_RELATION_PROPS:
+        raise ToolError(
+            f"{prop!r} is not a traversable relation here: the adjacency endpoint "
+            "reports a count but resolves no entities. Read the entity's own record "
+            "(fetch_entity_by_id) for its risk basis."
+        )
     client = _resolve_client()
     try:
         if prop is None:
@@ -194,7 +240,7 @@ async def fetch_entity_relations(
         raise ToolError(describe_error(exc)) from exc
 
 
-@mcp.tool
+@mcp.tool(title="Describe FollowTheMoney (FtM) schema", annotations=_READ_ONLY)
 def describe_schema(schema: str | None = None) -> dict[str, Any]:
     """Look up the FtM data model (offline). No arg → index of matchable schemata;
     a name (e.g. "Person") → its settable `properties` (the fields you fill in a
@@ -209,6 +255,50 @@ def describe_schema(schema: str | None = None) -> dict[str, Any]:
         return introspect.describe_schema(schema)
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(title="Describe topic tags", annotations=_READ_ONLY)
+def describe_topics() -> dict[str, str]:
+    """Resolve topic tags to labels — the whole `topic` vocabulary (value → label).
+
+    Returns the full map in one call so several tags seen together (`role.pep`,
+    `role.pol`, `sanction`, …) resolve at once. Use to dereference topic codes in
+    match_entity / search_entities results.
+    """
+    return introspect.topic_values()
+
+
+@mcp.tool(title="Describe country codes", annotations=_READ_ONLY)
+def describe_countries() -> dict[str, str]:
+    """Resolve country / jurisdiction codes to names — the whole `country` vocabulary.
+
+    Returns the full code → name map in one call. Use to dereference country codes
+    seen in results (e.g. `gb` → United Kingdom).
+    """
+    return introspect.country_values()
+
+
+@mcp.tool(title="Describe a dataset", annotations=_READ_ONLY)
+async def describe_dataset(name: str | None = None) -> dict[str, Any]:
+    """Resolve dataset names to their metadata (live catalog).
+
+    No arg → a compact index of every indexed dataset (name, title, tags like
+    `list.sanction` / `list.pep`, entity_count) for discovery. A name (e.g.
+    "us_ofac_sdn") → that dataset's full record: title, summary, publisher,
+    coverage, counts, freshness. Use to dereference dataset names seen in
+    match_entity / search_entities results.
+    """
+    client = _resolve_client()
+    try:
+        resp = await client.datasets()
+    except YenteError as exc:
+        raise ToolError(describe_error(exc)) from exc
+    if name is None:
+        return {"datasets": shaping.dataset_index(resp)}
+    for dataset in resp.datasets:
+        if dataset.name == name:
+            return dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
+    raise ToolError(f"Unknown dataset {name!r}. Call describe_dataset() for the catalog index.")
 
 
 # ----- resources: ftm:// (static, bundled model, no server call) -----
@@ -226,34 +316,17 @@ def ftm_schema(name: str) -> dict[str, Any]:
     return introspect.describe_schema(name)
 
 
-@mcp.resource("ftm://topics")
-def ftm_topics() -> dict[str, str]:
-    """The `topic` vocabulary (value → label)."""
-    return introspect.topic_values()
-
-
-@mcp.resource("ftm://countries")
-def ftm_countries() -> dict[str, str]:
-    """The `country` vocabulary (code → name)."""
-    return introspect.country_values()
-
-
-@mcp.resource("ftm://genders")
-def ftm_genders() -> dict[str, str]:
-    """The `gender` vocabulary (value → label)."""
-    return introspect.gender_values()
+# Topic / country vocabularies are the describe_topics / describe_countries *tools*
+# above, not resources: the model needs them to dereference codes mid-conversation
+# and clients don't reliably read resources. Gender values ("male", "female", …)
+# are self-explanatory, so there's no lookup for them at all.
 
 
 # ----- resources: yente:// (live server state) -----
-# TODO: confirm the inbound Authorization header is reachable from a resource
-# read (it is from a tool call); if not, these may need to be tools instead.
-
-
-@mcp.resource("yente://catalog")
-async def yente_catalog() -> dict[str, Any]:
-    """Indexed datasets and their freshness (live)."""
-    resp = await _resolve_client().datasets()
-    return resp.model_dump(by_alias=True, mode="json", exclude_none=True)
+# Dataset lookup lives in the describe_dataset *tool*, not a resource: clients
+# don't reliably let the model read resources, so a code → metadata lookup it
+# needs mid-conversation has to be a tool. algorithms stays a resource for now
+# (rarely needed for dereferencing); revisit if it hits the same wall.
 
 
 @mcp.resource("yente://algorithms")
