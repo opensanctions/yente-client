@@ -140,10 +140,14 @@ def test_schema_properties_are_settable_attributes_only() -> None:
 def test_schema_relations_are_compact_entity_edges() -> None:
     rels = {r["name"]: r for r in schema_relations("Person")}
     assert rels["ownershipOwner"]["range"] == "Ownership"
+    assert rels["ownershipOwner"]["reverse"] == "owner"  # role on the far entity
     assert rels["sanctions"]["range"] == "Sanction"
     assert "riskSource" in rels  # a non-stub entity prop is still a relation
-    # compact: only name + range
-    assert set(rels["ownershipOwner"]) == {"name", "range"}
+    # same-range edges disambiguated by reverse
+    assert rels["familyPerson"]["reverse"] == "person"
+    assert rels["familyRelative"]["reverse"] == "relative"
+    # compact: only name + range + reverse
+    assert set(rels["ownershipOwner"]) == {"name", "range", "reverse"}
 
 
 def test_describe_schema_splits_properties_and_relations() -> None:

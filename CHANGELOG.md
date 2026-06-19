@@ -20,7 +20,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   values. Boolean flags (`matchable`, `edge`) appear only when true, and
   `matchable` resolves the FtM type default. `describe_schema` splits its fields
   into `properties` (settable scalar attributes — the `match_entity` inputs) and
-  `relations` (entity-typed edges as compact `{name, range}` — the
+  `relations` (entity-typed edges as compact `{name, range, reverse}` — the
   `fetch_entity_relations` targets).
 
 ### Changed

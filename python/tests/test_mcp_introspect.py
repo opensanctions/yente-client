@@ -56,7 +56,8 @@ def test_describe_schema_entity_property_is_a_relation() -> None:
     own = introspect.describe_schema("Ownership")
     owner = next(r for r in own["relations"] if r["name"] == "owner")
     assert owner["range"] == "LegalEntity"
-    assert set(owner) == {"name", "range"}  # compact
+    assert owner["reverse"] == "ownershipOwner"
+    assert set(owner) == {"name", "range", "reverse"}  # compact
     # entity-typed props live in relations, not the settable properties list
     assert all(p["type"] != "entity" for p in own["properties"])
 

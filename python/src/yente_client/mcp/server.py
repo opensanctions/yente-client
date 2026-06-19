@@ -200,7 +200,8 @@ def describe_schema(schema: str | None = None) -> dict[str, Any]:
     a name (e.g. "Person") → its settable `properties` (the fields you fill in a
     match_entity query, with real names like `birthDate`) plus `relations` (the
     entity edges: pass a relation's `name` as `prop` to fetch_entity_relations,
-    and its `range` is the schema the edge points at). Use before match_entity.
+    `range` is the schema it points at, `reverse` is the source's role on the far
+    entity). Use before match_entity.
     """
     if schema is None:
         return {"schemata": introspect.schema_index()}

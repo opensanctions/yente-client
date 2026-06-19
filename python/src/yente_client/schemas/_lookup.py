@@ -158,16 +158,24 @@ def schema_properties(schema: str) -> list[dict[str, Any]]:
 
 
 def schema_relations(schema: str) -> list[dict[str, Any]]:
-    """Project a schema's relationship edges (entity-typed properties) as {name, range}.
+    """Project a schema's relationship edges (entity-typed properties).
 
     These are the edges ``fetch_entity_relations`` traverses (``ownershipOwner``,
-    ``sanctions``, ``familyPerson``, …): pass the ``name`` as its ``prop`` and
-    ``range`` is the schema the edge points at. Kept compact — a traversable edge
-    needs only its name and target, not the full property projection.
+    ``sanctions``, ``familyPerson``, …): pass the ``name`` as its ``prop``,
+    ``range`` is the schema the edge points at, and ``reverse`` names the role
+    the source plays on the far entity — which disambiguates same-``range`` edges
+    (``familyPerson``/``person`` vs ``familyRelative``/``relative``, both →
+    ``Family``). Kept compact — no full property projection.
     """
     chosen = _flatten_properties(schema)
     return [
-        _compact({"name": name, "range": chosen[name].get("range")})
+        _compact(
+            {
+                "name": name,
+                "range": chosen[name].get("range"),
+                "reverse": chosen[name].get("reverse"),
+            }
+        )
         for name in sorted(chosen)
         if chosen[name].get("type") == "entity"
     ]

@@ -984,10 +984,10 @@ def ref_schema_command(
         relations = summary.get("relations", [])
         if relations:
             typer.echo("")
-            rel_rows = [[r["name"], r.get("range", "")] for r in relations]
+            rel_rows = [[r["name"], r.get("range", ""), r.get("reverse", "")] for r in relations]
             print_table(
                 rel_rows,
-                headers=["relation", "points to"],
+                headers=["relation", "points to", "reverse"],
                 title=f"{len(relations)} relationship edge(s) — traverse via the adjacency API",
             )
         typer.echo("")
