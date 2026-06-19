@@ -10,6 +10,7 @@ from yente_client.schemas import (
     model,
     schema_index,
     schema_properties,
+    schema_relations,
     type_values,
 )
 
@@ -128,14 +129,30 @@ def test_describe_schema_property_field_policy() -> None:
         assert dropped not in bd
 
 
-def test_schema_properties_includes_stub_edges_marked() -> None:
+def test_schema_properties_are_settable_attributes_only() -> None:
     props = {p["name"]: p for p in schema_properties("Person")}
-    # Stub (reverse-edge) properties ARE included — they're the relationship
-    # edges fetch_entity_relations traverses — but marked so callers don't treat
-    # them as settable match input.
-    assert props["ownershipOwner"]["stub"] is True
-    assert props["ownershipOwner"]["type"] == "entity"
-    assert "stub" not in props["birthDate"]  # settable attribute, no marker
+    assert "birthDate" in props  # scalar attribute
+    assert "ownershipOwner" not in props  # entity edge -> relations, not here
+    assert all(p["type"] != "entity" for p in props.values())
+    assert "stub" not in props["birthDate"]
+
+
+def test_schema_relations_are_compact_entity_edges() -> None:
+    rels = {r["name"]: r for r in schema_relations("Person")}
+    assert rels["ownershipOwner"]["range"] == "Ownership"
+    assert rels["sanctions"]["range"] == "Sanction"
+    assert "riskSource" in rels  # a non-stub entity prop is still a relation
+    # compact: only name + range
+    assert set(rels["ownershipOwner"]) == {"name", "range"}
+
+
+def test_describe_schema_splits_properties_and_relations() -> None:
+    person = describe_schema("Person")
+    prop_names = {p["name"] for p in person["properties"]}
+    rel_names = {r["name"] for r in person["relations"]}
+    assert "birthDate" in prop_names
+    assert "ownershipOwner" in rel_names
+    assert prop_names.isdisjoint(rel_names)
 
 
 def test_property_matchable_omitted_when_false() -> None:
@@ -147,13 +164,9 @@ def test_property_matchable_omitted_when_false() -> None:
 
 def test_empty_values_are_omitted() -> None:
     props = {p["name"]: p for p in schema_properties("Person")}
-    # birthDate has no description and isn't entity-typed -> those keys absent
+    # birthDate has no description and is scalar -> those keys are absent
+    assert "description" not in props["birthDate"]
     assert "range" not in props["birthDate"]
-    assert "reverse" not in props["birthDate"]
-    # an entity-typed property keeps range/reverse
-    owner = {p["name"]: p for p in schema_properties("Ownership")}["owner"]
-    assert owner["range"] == "LegalEntity"
-    assert owner["reverse"] == "ownershipOwner"
 
 
 def test_schema_index_matchable_only_is_summaries() -> None:

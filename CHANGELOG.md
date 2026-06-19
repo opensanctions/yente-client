@@ -17,9 +17,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fields (descriptions, `extends`, `range`/`reverse`) and drops structural cruft
   (`label`/`plural`/flattened ancestor closure on schemata;
   `maxLength`/`qname`/`deprecated`/`format` on properties), and omits empty
-  values. Boolean flags (`matchable`, `stub`, `edge`) appear only when true, and
-  `matchable` resolves the FtM type default. Relationship (`stub`) properties —
-  the `fetch_entity_relations` targets — are kept and flagged `stub: true`.
+  values. Boolean flags (`matchable`, `edge`) appear only when true, and
+  `matchable` resolves the FtM type default. `describe_schema` splits its fields
+  into `properties` (settable scalar attributes — the `match_entity` inputs) and
+  `relations` (entity-typed edges as compact `{name, range}` — the
+  `fetch_entity_relations` targets).
 
 ### Changed
 

@@ -18,6 +18,7 @@ from yente_client.schemas._lookup import (
     property_matchable,
     schema_index,
     schema_properties,
+    schema_relations,
     schema_summary,
     type_values,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "property_matchable",
     "schema_index",
     "schema_properties",
+    "schema_relations",
     "schema_summary",
     "type_values",
 ]

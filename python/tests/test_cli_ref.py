@@ -71,13 +71,14 @@ def test_ref_schema_person_json(runner) -> None:
     assert "name" in prop_names
 
 
-def test_ref_schema_includes_stub_edges_marked(runner) -> None:
-    """Stub (reverse-edge) properties ARE shown — they're the relationship edges
-    fetch_entity_relations traverses — but marked so they read as edges."""
+def test_ref_schema_lists_relations_separately(runner) -> None:
+    """Entity edges live under `relations` (compact name+range), not `properties`."""
     summary = json.loads(runner.invoke(app, ["ref", "schema", "Person", "-f", "json"]).stdout)
-    by_name = {p["name"]: p for p in summary["properties"]}
-    assert by_name["ownershipOwner"]["stub"] is True
-    assert "stub" not in by_name["birthDate"]  # settable attribute
+    prop_names = {p["name"] for p in summary["properties"]}
+    rels = {r["name"]: r for r in summary["relations"]}
+    assert "ownershipOwner" in rels
+    assert rels["ownershipOwner"]["range"] == "Ownership"
+    assert "ownershipOwner" not in prop_names
 
 
 def test_ref_schema_omits_deprecated_field(runner) -> None:

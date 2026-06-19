@@ -116,31 +116,8 @@ def property_matchable(prop_def: dict[str, Any]) -> bool:
     return bool(matchable)
 
 
-def _project_property(name: str, prop_def: dict[str, Any]) -> dict[str, Any]:
-    return _compact(
-        {
-            "name": name,
-            "label": prop_def.get("label"),
-            "type": prop_def.get("type"),
-            # flags are only emitted when true (false reads as absent)
-            "matchable": property_matchable(prop_def) or None,
-            "stub": prop_def.get("stub") or None,
-            "description": (prop_def.get("description") or "").strip(),
-            "range": prop_def.get("range"),
-            "reverse": prop_def.get("reverse"),
-            "examples": prop_def.get("examples"),
-        }
-    )
-
-
-def schema_properties(schema: str) -> list[dict[str, Any]]:
-    """Project a schema's properties (own + inherited), sorted by name.
-
-    Includes ``stub`` (reverse-edge) properties — those are the relationship
-    edges ``fetch_entity_relations`` traverses (``ownershipOwner``,
-    ``sanctions``, …) — but marks them ``stub: true`` so callers can tell a
-    traversable edge from a settable attribute (stubs aren't valid match input).
-    """
+def _flatten_properties(schema: str) -> dict[str, dict[str, Any]]:
+    """Collect ``{name: definition}`` for a schema, own + inherited (first wins)."""
     if not has_schema(schema):
         raise KeyError(schema)
     chosen: dict[str, dict[str, Any]] = {}
@@ -148,7 +125,52 @@ def schema_properties(schema: str) -> list[dict[str, Any]]:
         for pname, pdef in model["schemata"].get(ancestor, {}).get("properties", {}).items():
             if pname not in chosen:
                 chosen[pname] = pdef
-    return [_project_property(name, chosen[name]) for name in sorted(chosen)]
+    return chosen
+
+
+def _project_property(name: str, prop_def: dict[str, Any]) -> dict[str, Any]:
+    return _compact(
+        {
+            "name": name,
+            "label": prop_def.get("label"),
+            "type": prop_def.get("type"),
+            # flag only emitted when true (false reads as absent)
+            "matchable": property_matchable(prop_def) or None,
+            "description": (prop_def.get("description") or "").strip(),
+            "examples": prop_def.get("examples"),
+        }
+    )
+
+
+def schema_properties(schema: str) -> list[dict[str, Any]]:
+    """Project a schema's settable attributes (non-``entity``-typed), sorted by name.
+
+    These are the fields you fill in a ``match_entity`` query (names, dates,
+    countries, identifiers, …). Relationship edges (entity-typed properties)
+    live in :func:`schema_relations`, not here.
+    """
+    chosen = _flatten_properties(schema)
+    return [
+        _project_property(name, chosen[name])
+        for name in sorted(chosen)
+        if chosen[name].get("type") != "entity"
+    ]
+
+
+def schema_relations(schema: str) -> list[dict[str, Any]]:
+    """Project a schema's relationship edges (entity-typed properties) as {name, range}.
+
+    These are the edges ``fetch_entity_relations`` traverses (``ownershipOwner``,
+    ``sanctions``, ``familyPerson``, …): pass the ``name`` as its ``prop`` and
+    ``range`` is the schema the edge points at. Kept compact — a traversable edge
+    needs only its name and target, not the full property projection.
+    """
+    chosen = _flatten_properties(schema)
+    return [
+        _compact({"name": name, "range": chosen[name].get("range")})
+        for name in sorted(chosen)
+        if chosen[name].get("type") == "entity"
+    ]
 
 
 def schema_summary(schema: str) -> dict[str, Any]:
@@ -171,9 +193,17 @@ def schema_summary(schema: str) -> dict[str, Any]:
 
 
 def describe_schema(schema: str) -> dict[str, Any]:
-    """Full projected schema view: the summary plus its projected properties."""
+    """Full projected schema view: summary + settable ``properties`` + ``relations``.
+
+    ``properties`` are the attributes you set in a match query; ``relations`` are
+    the entity-typed edges you traverse with ``fetch_entity_relations`` (omitted
+    when the schema has none).
+    """
     summary = schema_summary(schema)
     summary["properties"] = schema_properties(schema)
+    relations = schema_relations(schema)
+    if relations:
+        summary["relations"] = relations
     return summary
 
 

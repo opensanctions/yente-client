@@ -52,13 +52,13 @@ def test_describe_schema_properties_sorted_by_name() -> None:
     assert names == sorted(names)
 
 
-def test_describe_schema_entity_property_carries_range_and_reverse() -> None:
-    owner = next(
-        p for p in introspect.describe_schema("Ownership")["properties"] if p["name"] == "owner"
-    )
-    assert owner["type"] == "entity"
+def test_describe_schema_entity_property_is_a_relation() -> None:
+    own = introspect.describe_schema("Ownership")
+    owner = next(r for r in own["relations"] if r["name"] == "owner")
     assert owner["range"] == "LegalEntity"
-    assert owner["reverse"] == "ownershipOwner"
+    assert set(owner) == {"name", "range"}  # compact
+    # entity-typed props live in relations, not the settable properties list
+    assert all(p["type"] != "entity" for p in own["properties"])
 
 
 def test_describe_schema_non_entity_property_omits_range() -> None:

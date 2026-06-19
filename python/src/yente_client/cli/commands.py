@@ -972,16 +972,24 @@ def ref_schema_command(
                 p["name"],
                 p["type"],
                 "✓" if p.get("matchable") else "",
-                "stub" if p.get("stub") else "",
                 _truncate(p.get("description", ""), 50),
             ]
             for p in properties
         ]
         print_table(
             rows,
-            headers=["property", "type", "matchable", "flags", "description"],
-            title=f"{len(properties)} property/properties (own + inherited)",
+            headers=["property", "type", "matchable", "description"],
+            title=f"{len(properties)} settable property/properties (own + inherited)",
         )
+        relations = summary.get("relations", [])
+        if relations:
+            typer.echo("")
+            rel_rows = [[r["name"], r.get("range", "")] for r in relations]
+            print_table(
+                rel_rows,
+                headers=["relation", "points to"],
+                title=f"{len(relations)} relationship edge(s) — traverse via the adjacency API",
+            )
         typer.echo("")
         typer.echo(
             "`matchable` is the FtM model's per-property flag. It is NOT a 'useful for matching'"
