@@ -18,7 +18,7 @@ from yente_client._translation import (
     serialise_search_filters,
     unwrap_match_response,
 )
-from yente_client.client import _check_matchable_schema
+from yente_client.client import PROGRAMS_URL, _check_matchable_schema
 from yente_client.entities import EntityInput
 from yente_client.env import DEFAULT_BASE_URL
 from yente_client.exceptions import NotFoundError, TransportError
@@ -30,6 +30,7 @@ from yente_client.models import (
     DatasetsResponse,
     Entity,
     MatchResponse,
+    ProgramsResponse,
     SearchResponse,
     StatementsResponse,
     StatusResponse,
@@ -73,6 +74,8 @@ class AsyncClient:
         kwargs["transport"] = transport or httpx.AsyncHTTPTransport(retries=2)
         self._http = httpx.AsyncClient(**kwargs)
         self._base_url = base_url
+        # Per-URL (etag, body) pairs for _request_revalidated; see the sync client.
+        self._etag_cache: dict[str, tuple[str, Any]] = {}
 
     @property
     def user_agent(self) -> str:
@@ -111,6 +114,28 @@ class AsyncClient:
 
         return response.json()
 
+    async def _request_revalidated(self, url: str) -> Any:
+        """Async mirror of :meth:`yente_client.client.Client._request_revalidated`."""
+        headers: dict[str, str] = {}
+        cached = self._etag_cache.get(url)
+        if cached is not None:
+            headers["If-None-Match"] = cached[0]
+        try:
+            response = await self._http.request("GET", url, headers=headers)
+        except httpx.TransportError as exc:
+            raise TransportError(str(exc)) from exc
+
+        if response.status_code == 304 and cached is not None:
+            return cached[1]
+        if not response.is_success:
+            raise_for_response(response)
+
+        body = response.json()
+        etag = response.headers.get("ETag")
+        if etag:
+            self._etag_cache[url] = (etag, body)
+        return body
+
     # ----- system / health endpoints -----
 
     async def healthz(self) -> StatusResponse:
@@ -125,11 +150,15 @@ class AsyncClient:
 
     async def datasets(self) -> DatasetsResponse:
         """Async equivalent of :meth:`yente_client.client.Client.datasets`."""
-        return DatasetsResponse.model_validate(await self._request("GET", "/catalog"))
+        return DatasetsResponse.model_validate(await self._request_revalidated("/catalog"))
 
     async def algorithms(self) -> AlgorithmsResponse:
         """Async equivalent of :meth:`yente_client.client.Client.algorithms`."""
         return AlgorithmsResponse.model_validate(await self._request("GET", "/algorithms"))
+
+    async def programs(self) -> ProgramsResponse:
+        """Async equivalent of :meth:`yente_client.client.Client.programs`."""
+        return ProgramsResponse.model_validate(await self._request_revalidated(PROGRAMS_URL))
 
     # ----- statements (OpenSanctions API only) -----
 

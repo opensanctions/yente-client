@@ -23,20 +23,44 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `relations` (entity-typed edges as compact `{name, range, reverse}` — the
   `fetch_entity_relations` targets).
 
+- **`Statement.origin`** — how a claim was produced (`"inferred"`, `"patch"`,
+  …; unset for plain crawled data), previously dropped when parsing the
+  `/statements` wire format.
+
+- **`Client.programs()` / `AsyncClient.programs()`** — fetch the
+  sanctions-program catalog (`Program` / `ProgramIssuer` / `ProgramsResponse`
+  models), resolving the `programId` codes sanctioned entities carry into
+  program title, issuer, policy summary, and measures. Served from the public
+  artifact at `PROGRAMS_URL` (data.opensanctions.org), independent of
+  `base_url`.
+
+- **ETag revalidation** for `programs()` and `datasets()`: clients keep a
+  per-URL `(etag, body)` pair and send `If-None-Match`, serving the held body
+  on `304 Not Modified`. Transparent — servers without `ETag` support (yente's
+  `/catalog` today, see opensanctions/yente#1202) get plain-fetch behavior.
+
+- **`yente-cli programs [KEY]`** — list sanctions programs, or show one
+  program's full metadata; `KEY` also resolves via program aliases.
+
 ### Changed
 
 - `yente-cli ref schemas` / `ref schema NAME` output is leaner (the projection
   above): the `abstract`/`required`/`deprecated` columns/fields are gone.
 
 - **MCP server** (`yente-mcp`, `pip install 'yente-client[mcp]'`): exposes the
-  matching surface to LLM agents over the Model Context Protocol as five tools
-  (`match_entity`, `search_entities`, `fetch_entity_by_id`,
-  `fetch_entity_relations`, `describe_schema`) and `ftm://` / `yente://`
-  resources, built on `AsyncClient`. Runs over streamable-HTTP; auth is
-  bearer-token pass-through (the token is the caller's OpenSanctions API key,
-  forwarded downstream). Skeleton — the schema/model surface and response
-  shaping are covered by tests; the network tools are not yet exercised
-  end-to-end.
+  matching surface to LLM agents over the Model Context Protocol as five
+  entity tools (`match_entity`, `search_entities`, `fetch_entity_by_id`,
+  `fetch_entity_relations`, `fetch_entity_statements`) plus `describe_*`
+  lookup tools (`describe_schema`, `describe_topics`, `describe_countries`,
+  `describe_dataset`, `describe_program`) and `ftm://` resources, built on
+  `AsyncClient`. Every code in entity-bearing results resolves inline: topic
+  and country labels from the bundled model, dataset and program titles as
+  attached `dataset_titles` / `program_titles` legends (cached live lookups,
+  failure-soft); matching algorithms are deliberately not exposed (server
+  default applies). Runs over streamable-HTTP; auth is bearer-token pass-through (the
+  token is the caller's OpenSanctions API key, forwarded downstream).
+  Skeleton — the schema/model surface and response shaping are covered by
+  tests; the network tools are not yet exercised end-to-end.
 
 ## [0.1.0] - 2026-06-07
 

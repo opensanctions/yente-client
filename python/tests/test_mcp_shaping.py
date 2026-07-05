@@ -3,13 +3,19 @@
 Pure functions over the SDK response models — no network, no FastMCP.
 """
 
+from datetime import datetime
+
 from yente_client.mcp.shaping import (
     dataset_index,
+    program_index,
     shape_adjacency,
     shape_adjacency_property,
     shape_edge,
     shape_entity,
+    shape_full_record,
     shape_scored,
+    shape_statements,
+    title_glossary,
 )
 from yente_client.models import (
     AdjacentPropertyResponse,
@@ -18,9 +24,14 @@ from yente_client.models import (
     DatasetsResponse,
     Entity,
     FeatureResult,
+    Program,
+    ProgramIssuer,
     ScoredEntity,
+    Statement,
+    StatementsResponse,
     TotalSpec,
 )
+from yente_client.schemas import type_values
 
 
 def test_shape_entity_keeps_core_identity_fields() -> None:
@@ -67,6 +78,57 @@ def test_shape_entity_drops_nested_entity_values() -> None:
     )
     # Only the plain string survives; follow nested edges via fetch_entity_relations.
     assert shape_entity(entity)["properties"]["address"] == ["1 Main St"]
+
+
+def test_shape_entity_resolves_topics_inline() -> None:
+    entity = Entity(
+        id="Q1",
+        caption="x",
+        schema="Person",
+        properties={"name": ["x"], "topics": ["sanction", "crime.war"]},
+    )
+    shaped = shape_entity(entity)
+    # topics leave `properties` and become a top-level code → label map
+    assert "topics" not in shaped["properties"]
+    vocab = type_values("topic")
+    assert shaped["topics"] == {"sanction": vocab["sanction"], "crime.war": vocab["crime.war"]}
+
+
+def test_shape_entity_unknown_topic_falls_back_to_code() -> None:
+    entity = Entity(id="Q1", caption="x", schema="Person", properties={"topics": ["not.a.topic"]})
+    assert shape_entity(entity)["topics"] == {"not.a.topic": "not.a.topic"}
+
+
+def test_shape_entity_no_topics_key_when_absent() -> None:
+    entity = Entity(id="Q1", caption="x", schema="Person", properties={"name": ["x"]})
+    assert "topics" not in shape_entity(entity)
+
+
+def test_shape_entity_adds_country_glossary() -> None:
+    entity = Entity(
+        id="Q1",
+        caption="x",
+        schema="Person",
+        properties={"nationality": ["ru"], "country": ["de"]},
+    )
+    shaped = shape_entity(entity)
+    vocab = type_values("country")
+    assert shaped["countries"] == {"ru": vocab["ru"], "de": vocab["de"]}
+    # the raw codes stay in properties — they're the filter inputs
+    assert shaped["properties"]["nationality"] == ["ru"]
+
+
+def test_shape_entity_country_glossary_only_from_country_typed_props() -> None:
+    # "de" here is a registration number that happens to look like a code
+    entity = Entity(
+        id="Q1", caption="x", schema="Company", properties={"registrationNumber": ["de"]}
+    )
+    assert "countries" not in shape_entity(entity)
+
+
+def test_shape_entity_keeps_program_id() -> None:
+    entity = Entity(id="Q1", caption="x", schema="Person", properties={"programId": ["US-RUSHAR"]})
+    assert shape_entity(entity)["properties"]["programId"] == ["US-RUSHAR"]
 
 
 def test_shape_entity_honours_custom_property_selection() -> None:
@@ -215,6 +277,124 @@ def test_shape_adjacency_drops_riskSource_phantom_edge() -> None:
     )
     out = shape_adjacency(resp)
     assert set(out) == {"ownershipOwner"}
+
+
+def test_shape_full_record_keeps_dump_and_adds_glossaries() -> None:
+    entity = Entity(
+        id="Q1",
+        caption="Jane Doe",
+        schema="Person",
+        properties={
+            "name": ["Jane Doe"],
+            "notes": ["kept — no trimming in the detail view"],
+            "topics": ["sanction"],
+            "birthCountry": ["ru"],  # country-typed but outside KEY_PROPERTIES
+        },
+        referents=["ofac-1234"],
+    )
+    record = shape_full_record(entity)
+    # untrimmed dump: properties and referents survive
+    assert record["properties"]["notes"] == ["kept — no trimming in the detail view"]
+    assert record["properties"]["topics"] == ["sanction"]
+    assert record["referents"] == ["ofac-1234"]
+    # inline glossaries ride along at the top level
+    assert record["topics"] == {"sanction": type_values("topic")["sanction"]}
+    assert record["countries"] == {"ru": type_values("country")["ru"]}
+
+
+def test_shape_full_record_omits_empty_glossaries() -> None:
+    entity = Entity(id="Q1", caption="x", schema="Person", properties={"name": ["x"]})
+    record = shape_full_record(entity)
+    assert "topics" not in record
+    assert "countries" not in record
+
+
+def test_shape_statements_projects_provenance_rows() -> None:
+    resp = StatementsResponse(
+        results=[
+            Statement(
+                id="s1",
+                entity_id="ofac-45937",
+                canonical_id="NK-abc",
+                prop="alias",
+                prop_type="name",
+                schema="Person",
+                value="A. Zakharov",
+                original_value="ZAKHAROV, A.",
+                dataset="us_ofac_sdn",
+                lang="eng",
+                origin="patch",
+                first_seen=datetime(2023, 7, 19, 18, 2, 43),
+                last_seen=datetime(2026, 3, 25, 12, 53, 9),
+            ),
+            Statement(
+                id="s2",
+                entity_id="eu-fsf-12789",
+                canonical_id="NK-abc",
+                prop="birthDate",
+                prop_type="date",
+                schema="Person",
+                value="1965-09-21",
+                original_value="1965-09-21",  # unchanged by cleaning → omitted
+                dataset="eu_fsf",
+                first_seen=datetime(2024, 1, 1),
+                last_seen=datetime(2026, 1, 1),
+            ),
+        ],
+        total=TotalSpec(value=2, relation="eq"),
+        limit=50,
+        offset=0,
+    )
+    out = shape_statements(resp)
+    assert (out["total"], out["limit"], out["offset"]) == (2, 50, 0)
+    first = out["results"][0]
+    assert first == {
+        "prop": "alias",
+        "value": "A. Zakharov",
+        "dataset": "us_ofac_sdn",
+        "entity_id": "ofac-45937",
+        "first_seen": "2023-07-19",
+        "lang": "eng",
+        "original_value": "ZAKHAROV, A.",
+        "origin": "patch",
+    }
+    second = out["results"][1]
+    assert "canonical_id" not in second  # per-row canonical dropped (it's the query)
+    assert "last_seen" not in second  # recency is noise for provenance
+    assert "original_value" not in second  # same as value → omitted
+    assert "lang" not in second
+    assert "origin" not in second  # unset for plain crawled data
+
+
+def test_title_glossary_keeps_known_sorted_dedupes() -> None:
+    titles = {"us_ofac_sdn": "OFAC SDN", "eu_fsf": "EU Sanctions"}
+    out = title_glossary(["us_ofac_sdn", "eu_fsf", "us_ofac_sdn", "no_such"], titles)
+    assert out == {"eu_fsf": "EU Sanctions", "us_ofac_sdn": "OFAC SDN"}
+    assert list(out) == ["eu_fsf", "us_ofac_sdn"]  # sorted
+
+
+def test_title_glossary_empty_titles_yields_empty_legend() -> None:
+    # failure-soft: a failed titles lookup degrades to an empty legend
+    assert title_glossary(["us_ofac_sdn"], {}) == {}
+
+
+def test_program_index_projects_compact_fields() -> None:
+    programs = [
+        Program(
+            key="US-RUSHAR",
+            title="Russian Harmful Foreign Activities Sanctions",
+            summary="dropped from the index projection",
+            issuer=ProgramIssuer(name="OFAC", territory="us"),
+        ),
+        Program(key="EU-UKR"),
+    ]
+    out = program_index(programs)
+    assert out[0] == {
+        "key": "US-RUSHAR",
+        "title": "Russian Harmful Foreign Activities Sanctions",
+        "territory": "us",
+    }
+    assert out[1] == {"key": "EU-UKR", "title": None, "territory": None}
 
 
 def test_dataset_index_projects_compact_fields() -> None:

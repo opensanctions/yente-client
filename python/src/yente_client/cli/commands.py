@@ -34,7 +34,13 @@ from yente_client.exceptions import (
     TransportError,
     YenteError,
 )
-from yente_client.models import DataCoverage, DataPublisher, Dataset, Entity
+from yente_client.models import (
+    DataCoverage,
+    DataPublisher,
+    Dataset,
+    Entity,
+    ProgramIssuer,
+)
 from yente_client.schemas import (
     describe_schema,
     has_schema,
@@ -434,6 +440,91 @@ def datasets_command(
         print_table(rows, headers=["name", "title", "version", "current"])
 
 
+def _format_issuer(issuer: ProgramIssuer) -> str:
+    """Summarise a program's issuer as one line for the metadata table."""
+    label = issuer.name or issuer.acronym or "(unknown)"
+    if issuer.name and issuer.acronym:
+        label = f"{label} ({issuer.acronym})"
+    if issuer.territory:
+        label = f"{label} — {issuer.territory}"
+    return label
+
+
+def programs_command(
+    ctx: typer.Context,
+    key: str | None = typer.Argument(
+        None,
+        help="Optional program key (a `programId` value, e.g. `US-RUSHAR`). "
+        "When given, show that program's full metadata.",
+    ),
+    format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
+) -> None:
+    """List sanctions programs, or show one program's metadata.
+
+    Programs are the policy regimes sanctions designations are made under;
+    sanctioned entities name theirs in the `programId` property. Use this
+    to resolve those codes into a title, issuer, and policy summary. The
+    catalog is a public OpenSanctions data artifact — the fetch works
+    regardless of ``--base-url`` and needs no API key.
+    """
+    with _with_client(ctx) as client:
+        listing = client.programs()
+
+    if key is not None:
+        match = next((p for p in listing.data if p.key == key or key in p.aliases), None)
+        if match is None:
+            suggestion = difflib.get_close_matches(
+                key, [p.key for p in listing.data], n=1, cutoff=0.6
+            )
+            hint = f" Did you mean: {suggestion[0]}?" if suggestion else ""
+            typer.echo(
+                f"error: Unknown program {key!r}.{hint} Run `yente-cli programs` for the list.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        fmt = resolve_format(format_)
+        if fmt in (Format.JSON, Format.JSONL):
+            print_json(match)
+        else:
+            rows: list[list[Any]] = [["key", match.key], ["title", match.title or ""]]
+            if match.issuer is not None:
+                rows.append(["issuer", _format_issuer(match.issuer)])
+            if match.summary:
+                rows.append(["summary", match.summary.strip()])
+            if match.dataset:
+                rows.append(["dataset", match.dataset])
+            if match.aliases:
+                rows.append(["aliases", ", ".join(match.aliases)])
+            if match.target_territories:
+                rows.append(["target_territories", ", ".join(match.target_territories)])
+            if match.measures:
+                rows.append(["measures", ", ".join(match.measures)])
+            if match.url:
+                rows.append(["url", match.url])
+            print_table(rows, headers=["field", "value"], title=match.key)
+        return
+
+    fmt = resolve_format(format_)
+    if fmt == Format.JSON:
+        print_json(listing)
+    elif fmt == Format.JSONL:
+        print_jsonl(listing.data)
+    else:
+        table_rows = [
+            [
+                p.key,
+                _truncate(p.title or "", 60),
+                p.issuer.territory if p.issuer else "",
+            ]
+            for p in listing.data
+        ]
+        print_table(
+            table_rows,
+            headers=["key", "title", "territory"],
+            title=f"{len(listing.data)} program(s)",
+        )
+
+
 def statements_command(
     ctx: typer.Context,
     dataset: str | None = typer.Option(None, "--dataset", "-d", help="Restrict to one dataset."),
@@ -565,9 +656,11 @@ def fetch_command(
 ) -> None:
     """Fetch a single entity by ID.
 
-    Follows ``308`` redirects transparently when the supplied ID is a referent
-    of a canonical entity. The default (with ``nested=true``) returns related
-    entities inline; pass ``--no-nested`` for a lighter response.
+    Follows ``308`` redirects when the supplied ID is a referent of a canonical
+    entity — if the returned ``id`` differs from the one you passed, the entity
+    was merged; update stored references. The default (with ``nested=true``)
+    returns related entities inline; pass ``--no-nested`` for a lighter
+    response.
     """
     with _with_client(ctx) as client:
         entity = client.fetch(entity_id, nested=not no_nested)
@@ -598,7 +691,7 @@ def search_command(
         help="Filter by risk topic(s), e.g. `sanction`, `role.pep`. Repeatable.",
     ),
     countries: list[str] | None = typer.Option(
-        None, "--countries", help="Filter by ISO country code(s). Repeatable."
+        None, "--countries", help="Filter by country code(s) (see `ref countries`). Repeatable."
     ),
     filter_: list[str] | None = typer.Option(
         None,
@@ -755,11 +848,12 @@ def match_command(
 ) -> None:
     """Match a single entity (built from `-p` flags or `--from-file`) against a dataset.
 
-    This is the canonical command for ANY matching / record-linkage task,
-    including when you only have partial input (just a name, name + country,
-    etc.). `match` scores each candidate against the input and returns
-    explainable results. Don't reach for `search` when the input is sparse —
-    `search` is for human-typed search UIs, not for matching.
+    Query-by-example: describe the entity in as much detail as you can and
+    the API returns ranked, scored candidates with explanations. This is the
+    canonical command for ANY matching / record-linkage task, including when
+    you only have partial input (just a name, name + country, etc.). Don't
+    reach for `search` when the input is sparse — `search` is for human-typed
+    search UIs, not for matching.
 
     Exits 1 if no results returned, so shell scripts can gate on
     `yente-cli match … && …`.
@@ -1058,6 +1152,7 @@ def register(app: typer.Typer) -> None:
     """Attach all subcommands to ``app``."""
     app.command("status", epilog=_STATUS_EPILOG)(status_command)
     app.command("datasets", epilog=_DATASETS_EPILOG)(datasets_command)
+    app.command("programs", epilog=_PROGRAMS_EPILOG)(programs_command)
     app.command("statements", epilog=_STATEMENTS_EPILOG)(statements_command)
     app.command("algorithms", epilog=_ALGORITHMS_EPILOG)(algorithms_command)
     app.command("fetch", epilog=_FETCH_EPILOG)(fetch_command)
@@ -1128,6 +1223,25 @@ OUTPUT (with a dataset name + -f json):
 The `name` field is what you pass to `-d` / `--datasets` on match/search.
 """
 
+_PROGRAMS_EPILOG = """\
+EXAMPLES:
+  yente-cli programs                       # every program, table view
+  yente-cli programs -f jsonl              # one program per line
+  yente-cli programs US-RUSHAR             # full metadata for one program
+  yente-cli programs EU-UKR -f json        # one program, JSON for piping
+
+OUTPUT (no argument, with -f json):
+  {data: [{key, title, url, summary, dataset, issuer: {name, acronym,
+   organisation, territory}, aliases, target_territories, measures}, ...]}
+
+The `key` is what sanctioned entities carry in their `programId` property —
+use this command to resolve codes seen in match/search/fetch results into
+the program's title, issuer, and policy summary.
+
+Fetched from https://data.opensanctions.org/meta/programs.json (a public
+artifact, no API key needed), independent of --base-url.
+"""
+
 _STATEMENTS_EPILOG = """\
 EXAMPLES:
   yente-cli statements -c NK-aU5y... -f json              # all lineage for a canonical entity
@@ -1188,6 +1302,13 @@ OUTPUT (with -f json):
 
 Property values are always lists. With nested=true (default), entity-valued
 properties (sanctions, ownerships, family, ...) inline as nested Entity objects.
+
+MERGED IDS:
+  308 redirects are followed when the ID you pass was merged into another
+  entity during deduplication. If the returned `id` differs from the one
+  you requested, update your stored reference — the old ID stays resolvable
+  only while it remains in the entity's `referents` (the source-record and
+  superseded IDs that map to the canonical entity).
 """
 
 _SEARCH_EPILOG = """\
@@ -1224,6 +1345,9 @@ PROPERTY NAMES:
   Run `yente-cli ref schema Person` (or Company, Vessel, ...) to see what
   properties a schema accepts. Names are FtM camelCase: `firstName`, `birthDate`,
   `lastName`, `country`, `nationality` — not snake_case.
+  Country-typed values accept free text ("Russia") and are normalized
+  server-side. Matching works by value type, not field name — don't agonize
+  over `country` vs `jurisdiction`.
 
 SCHEMA CHOICE:
   Pick the most specific schema you can confidently set. A parent schema

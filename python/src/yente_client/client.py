@@ -23,6 +23,7 @@ from yente_client.models import (
     DatasetsResponse,
     Entity,
     MatchResponse,
+    ProgramsResponse,
     SearchResponse,
     StatementsResponse,
     StatusResponse,
@@ -33,6 +34,11 @@ BEST_ALGORITHM: Final[str] = "best"
 """Canonical algorithm name resolving to whichever matching algorithm the
 server currently recommends. Stable across algorithm version bumps — pass
 ``algorithm=BEST_ALGORITHM`` for forward-compatibility."""
+
+PROGRAMS_URL: Final[str] = "https://data.opensanctions.org/meta/programs.json"
+"""Public artifact carrying the sanctions-program catalog. Not part of the
+yente API: it lives on the OpenSanctions data bucket and describes the
+published data regardless of which server ``base_url`` points at."""
 
 
 def _check_matchable_schema(entity: EntityInput) -> None:
@@ -84,6 +90,10 @@ class Client:
         kwargs["transport"] = transport or httpx.HTTPTransport(retries=2)
         self._http = httpx.Client(**kwargs)
         self._base_url = base_url
+        # Per-URL (etag, body) pairs for _request_revalidated. Raw JSON, not
+        # validated models — callers re-validate, so a served 304 can't leak
+        # mutable state between calls.
+        self._etag_cache: dict[str, tuple[str, Any]] = {}
 
     @property
     def user_agent(self) -> str:
@@ -117,6 +127,34 @@ class Client:
 
         return response.json()
 
+    def _request_revalidated(self, url: str) -> Any:
+        """GET with ETag revalidation — serve the held body on ``304 Not Modified``.
+
+        Keeps one ``(etag, body)`` pair per URL on this client instance and sends
+        ``If-None-Match`` once it has one. A server that emits no ``ETag`` gets
+        exactly :meth:`_request` behavior, so this is safe to route any GET
+        endpoint through — it lights up when the server grows validator support.
+        """
+        headers: dict[str, str] = {}
+        cached = self._etag_cache.get(url)
+        if cached is not None:
+            headers["If-None-Match"] = cached[0]
+        try:
+            response = self._http.request("GET", url, headers=headers)
+        except httpx.TransportError as exc:
+            raise TransportError(str(exc)) from exc
+
+        if response.status_code == 304 and cached is not None:
+            return cached[1]
+        if not response.is_success:
+            raise_for_response(response)
+
+        body = response.json()
+        etag = response.headers.get("ETag")
+        if etag:
+            self._etag_cache[url] = (etag, body)
+        return body
+
     # ----- system / health endpoints -----
 
     def healthz(self) -> StatusResponse:
@@ -143,12 +181,28 @@ class Client:
 
         Calls the wire endpoint ``GET /catalog``; the SDK surface uses
         the ``datasets`` name because that's what the response carries.
+        Revalidates via ETag when the server provides one (yente doesn't yet;
+        see opensanctions/yente#1202).
         """
-        return DatasetsResponse.model_validate(self._request("GET", "/catalog"))
+        return DatasetsResponse.model_validate(self._request_revalidated("/catalog"))
 
     def algorithms(self) -> AlgorithmsResponse:
         """Fetch the list of enabled matching algorithms and the server's defaults."""
         return AlgorithmsResponse.model_validate(self._request("GET", "/algorithms"))
+
+    def programs(self) -> ProgramsResponse:
+        """Fetch the sanctions-program catalog — resolves ``programId`` codes.
+
+        Sanctioned entities carry a ``programId`` property naming the program
+        under which they were designated (e.g. ``"EU-UKR"``); this catalog maps
+        those codes to the program's title, issuer, policy summary, and
+        measures. Fetched from :data:`PROGRAMS_URL` on the public OpenSanctions
+        data bucket — an absolute URL, so it works regardless of ``base_url``
+        (including against a self-hosted yente). Long-lived clients revalidate
+        via ETag: repeat calls cost a bodiless 304 round-trip, not the full
+        artifact.
+        """
+        return ProgramsResponse.model_validate(self._request_revalidated(PROGRAMS_URL))
 
     # ----- statements (OpenSanctions API only) -----
 

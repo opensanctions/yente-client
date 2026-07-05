@@ -287,6 +287,46 @@ class DatasetsResponse(BaseModel):
     index_stale: bool = False
 
 
+class ProgramIssuer(BaseModel):
+    """The authority behind a sanctions program (government, UN body, …)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str | None = None
+    acronym: str | None = None
+    organisation: str | None = None
+    territory: str | None = None
+
+
+class Program(BaseModel):
+    """One sanctions program from the OpenSanctions program catalog.
+
+    ``key`` is the value entities carry in their ``programId`` property
+    (e.g. ``"EU-UKR"``, ``"US-RUSHAR"``) — fetch the catalog to resolve
+    those codes into the program's title, issuer, and policy summary.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    key: str
+    title: str | None = None
+    url: str | None = None
+    summary: str | None = None
+    dataset: str | None = None
+    issuer: ProgramIssuer | None = None
+    aliases: list[str] = Field(default_factory=list)
+    target_territories: list[str] = Field(default_factory=list)
+    measures: list[str] = Field(default_factory=list)
+
+
+class ProgramsResponse(BaseModel):
+    """Body of the program catalog artifact — a plain list under ``data``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    data: list[Program]
+
+
 class AdjacentPropertyResponse(BaseModel):
     """Body of ``/entities/{id}/adjacent/{property}`` — paginated entity refs."""
 
@@ -313,7 +353,9 @@ class Statement(BaseModel):
     Statements are the atomic claims that compose into entities — each
     statement records a single ``(entity_id, prop, value)`` triple plus
     provenance metadata (which dataset asserted it, when it was first
-    and last seen, language, original pre-cleaning value). See the
+    and last seen, language, original pre-cleaning value, and ``origin``
+    — how the claim was produced, e.g. ``"inferred"`` or ``"patch"``,
+    unset for plain crawled data). See the
     `statement-based data model <https://www.opensanctions.org/docs/statements/>`_
     for background.
     """
@@ -330,6 +372,7 @@ class Statement(BaseModel):
     original_value: str | None = None
     dataset: str
     lang: str | None = None
+    origin: str | None = None
     first_seen: datetime
     last_seen: datetime
 

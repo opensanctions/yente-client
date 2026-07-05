@@ -4,12 +4,14 @@ from typing import Any
 
 import httpx
 
+from yente_client.client import PROGRAMS_URL
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
     AlgorithmsResponse,
     DatasetsResponse,
     Entity,
+    ProgramsResponse,
     StatusResponse,
 )
 
@@ -81,6 +83,97 @@ def test_algorithms_returns_algorithms_response(make_client, load_fixture) -> No
     assert isinstance(r, AlgorithmsResponse)
     assert r.best == "logic-v2"
     assert {a.name for a in r.algorithms} == {"logic-v2", "name-matcher"}
+
+
+# ---------- programs (public artifact, not the API host) ----------
+
+
+def test_programs_returns_programs_response(make_client, load_fixture) -> None:
+    payload = load_fixture("programs")
+    with make_client(handler=_fixed_response(payload)) as c:
+        r = c.programs()
+    assert isinstance(r, ProgramsResponse)
+    assert [p.key for p in r.data] == ["US-RUSHAR", "EU-UKR"]
+    assert r.data[0].issuer is not None
+    assert r.data[0].issuer.acronym == "OFAC"
+    assert r.data[0].aliases == ["RUSSIA-EO14024"]
+    assert r.data[1].summary is None
+
+
+def test_programs_hits_public_artifact_url(make_client) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"data": []})
+
+    with make_client(handler=handler) as c:
+        c.programs()
+    # Absolute URL: overrides the client's base_url entirely.
+    assert seen == [PROGRAMS_URL]
+
+
+# ---------- ETag revalidation (programs today, /catalog once yente#1202 lands) ----------
+
+
+def _etagged(payload: dict[str, Any], etag: str):
+    """Handler serving ``payload`` with an ETag, answering If-None-Match with 304."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("If-None-Match") == etag:
+            return httpx.Response(304)
+        return httpx.Response(200, json=payload, headers={"ETag": etag})
+
+    return handler
+
+
+def test_programs_revalidates_with_etag(make_client, load_fixture) -> None:
+    payload = load_fixture("programs")
+    with make_client(handler=_etagged(payload, '"v1"')) as c:
+        first = c.programs()
+        second = c.programs()  # served from the held body via 304
+    assert [p.key for p in second.data] == [p.key for p in first.data]
+
+
+def test_programs_refetches_after_etag_change(make_client, load_fixture) -> None:
+    payload = load_fixture("programs")
+    etags: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        etags.append(request.headers.get("If-None-Match"))
+        # The artifact changed: the old validator no longer matches.
+        return httpx.Response(200, json=payload, headers={"ETag": f'"v{len(etags)}"'})
+
+    with make_client(handler=handler) as c:
+        c.programs()
+        c.programs()
+        c.programs()
+    # Each call revalidates against the last-seen ETag and picks up the new one.
+    assert etags == [None, '"v1"', '"v2"']
+
+
+def test_datasets_without_etag_behaves_plainly(make_client, load_fixture) -> None:
+    """yente serves no ETag today: no If-None-Match sent, full fetch each call."""
+    payload = load_fixture("catalog")
+    etags: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        etags.append(request.headers.get("If-None-Match"))
+        return httpx.Response(200, json=payload)
+
+    with make_client(handler=handler) as c:
+        c.datasets()
+        c.datasets()
+    assert etags == [None, None]
+
+
+def test_datasets_revalidates_once_server_sends_etag(make_client, load_fixture) -> None:
+    """The same path lights up for /catalog when yente#1202 ships."""
+    payload = load_fixture("catalog")
+    with make_client(handler=_etagged(payload, '"idx-7"')) as c:
+        first = c.datasets()
+        second = c.datasets()
+    assert [d.name for d in second.datasets] == [d.name for d in first.datasets]
 
 
 # ---------- statements (OpenSanctions API only) ----------

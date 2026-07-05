@@ -38,6 +38,7 @@ To point at a yente instance, set `YENTE_BASE_URL` or pass
 | `search` | Free-text search across one or more datasets, for backing user-facing search UIs. |
 | `fetch` | Fetch one entity by ID. |
 | `datasets` | List indexed datasets and their freshness. |
+| `programs` | List sanctions programs; resolve `programId` codes to their metadata. |
 | `statements` | Statement-level data lineage (OpenSanctions API only). |
 | `algorithms` | List enabled matching algorithms and the server defaults. |
 | `status` | Client setup, server health, and loaded datasets, at a glance. |
