@@ -1,6 +1,6 @@
 site_name: yente-client
-site_description: Python SDK and CLI for the yente / OpenSanctions matching API
-site_url: https://yenteclient.example/  # placeholder; we don't host yet
+site_description: Python SDK, CLI, and MCP server for the yente / OpenSanctions matching API
+site_url: https://yenteclient.followthemoney.tech/
 repo_url: https://github.com/opensanctions/yente-client
 repo_name: opensanctions/yente-client
 edit_uri: edit/main/python/docs/
@@ -10,6 +10,8 @@ site_dir: site  # gitignored; mkdocs build output
 
 theme:
   name: material
+  logo: https://assets.opensanctions.org/images/nura/logo-icon-white.svg
+  favicon: https://assets.opensanctions.org/images/nura/favicon-32.png
   features:
     - navigation.sections
     - navigation.indexes
@@ -18,9 +20,9 @@ theme:
     - content.code.annotate
     - search.suggest
   palette:
-    - scheme: default
-      primary: indigo
-      accent: indigo
+    primary: custom
+    accent: custom
+extra_css: [stylesheets/extra.css]
 
 plugins:
   - search
@@ -45,6 +47,7 @@ nav:
   - Home: index.md
   - Tutorial: tutorial.md
   - CLI overview: cli.md
+  - MCP server: mcp.md
   - API reference:
       - api/index.md
       - Client: api/client.md

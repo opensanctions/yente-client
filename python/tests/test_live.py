@@ -20,6 +20,7 @@ from yente_client.models import (
     AlgorithmsResponse,
     DatasetsResponse,
     MatchResponse,
+    ProgramsResponse,
     SearchResponse,
     StatusResponse,
 )
@@ -45,6 +46,18 @@ def test_algorithms_includes_best_resolver(live_client) -> None:
     # `best` is set by the server; ensure it's a non-empty string we can pass back.
     assert r.best
     assert isinstance(r.best, str)
+
+
+def test_programs_catalog_parses(live_client) -> None:
+    """Drift detector for the programs.json artifact — it's unversioned, so the
+    nightly run is what tells us when its shape moves under the Program model."""
+    r = live_client.programs()
+    assert isinstance(r, ProgramsResponse)
+    # Known anchors plus a sanity lower bound, never an exact count.
+    assert len(r.data) > 50
+    keys = {p.key for p in r.data}
+    assert any(k.startswith("US-") for k in keys)
+    assert any(p.issuer is not None and p.issuer.territory for p in r.data)
 
 
 def test_match_known_sanctioned_person(live_client) -> None:

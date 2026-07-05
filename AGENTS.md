@@ -1,7 +1,7 @@
 # yenteclient — project conventions
 
 Project-specific rules for working in this repo. The user's global
-`~/.claude/CLAUDE.md` still applies — these are extensions or explicit choices
+`~/.Codex/AGENTS.md` still applies — these are extensions or explicit choices
 where this project deviates from defaults.
 
 ## Names and identity
@@ -234,11 +234,9 @@ warrants a `CHANGELOG.md` line.
 
 - Lives under `python/docs/`, built with **mkdocs + mkdocs-material +
   mkdocstrings**.
-- Four hand-written pages: `index.md`, `tutorial.md`, `cli.md`, `mcp.md`.
-  They are the only prose pages — keep additions inside this small set
-  unless the surface justifies a new file.
-- Published to https://yenteclient.followthemoney.tech/ via GitHub Pages
-  (`.github/workflows/docs.yml`, deploys on push to `main`).
+- Three hand-written pages: `index.md`, `tutorial.md`, `cli.md`. They are
+  the only prose pages — keep additions inside this small set unless the
+  surface justifies a new file.
 - The `api/` tree is a set of thin `:::`-directive stubs; mkdocstrings
   expands them at build time from public docstrings. Updating a docstring
   updates the API reference; no separate regeneration step.
@@ -281,4 +279,4 @@ warrants a `CHANGELOG.md` line.
 - `.env` at repo root (gitignored) carries `OPENSANCTIONS_API_KEY` and
   `YENTE_BASE_URL`. Conftest loads it for local convenience.
 - Don't commit secrets. Don't push without explicit user direction (per the
-  global CLAUDE.md pacing rules).
+  global AGENTS.md pacing rules).

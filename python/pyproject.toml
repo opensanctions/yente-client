@@ -51,13 +51,16 @@ dev = [
     "fastmcp>=3.4",
     # Docs build (`make docs`): mkdocs + Material theme + mkdocstrings extracts
     # docstrings inline at build time; no separate regeneration step needed.
-    "mkdocs>=1.6",
-    "mkdocs-material>=9.5",
-    "mkdocstrings[python]>=0.26",
+    "yente-client[docs]",
     # Version bumper. Mirrors the toolchain in ../yente (and pinned to the
     # same release for cross-repo muscle memory). Run from the repo root:
     #     bump2version --verbose minor   # or patch / major
     "bump2version == 1.0.1",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
 ]
 
 [project.scripts]

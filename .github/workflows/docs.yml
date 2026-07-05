@@ -1,0 +1,57 @@
+# Build the mkdocs site and publish it to GitHub Pages, served at
+# https://yenteclient.followthemoney.tech/ (custom domain configured in the
+# repo's Pages settings; DNS CNAME points at opensanctions.github.io).
+#
+# Deploys on every push to main: the API reference is rendered from
+# docstrings, so source-only changes update the site too.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true # deploys are idempotent; only the latest matters
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + dev dependencies
+        run: pip install -e python/.[dev]
+
+      - name: Build site (mkdocs --strict)
+        working-directory: python
+        run: mkdocs build --strict
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: python/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

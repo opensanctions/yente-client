@@ -42,6 +42,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`yente-cli programs [KEY]`** — list sanctions programs, or show one
   program's full metadata; `KEY` also resolves via program aliases.
 
+- **Documentation site** published at
+  [yenteclient.followthemoney.tech](https://yenteclient.followthemoney.tech/)
+  (GitHub Pages, deployed from `main`), including a new MCP server page. The
+  repository and package now carry the MIT license text (the metadata already
+  declared MIT).
+
 ### Changed
 
 - `yente-cli ref schemas` / `ref schema NAME` output is leaner (the projection
