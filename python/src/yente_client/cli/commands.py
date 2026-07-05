@@ -34,13 +34,22 @@ from yente_client.exceptions import (
     TransportError,
     YenteError,
 )
-from yente_client.models import DataCoverage, DataPublisher, Dataset, Entity
+from yente_client.models import (
+    DataCoverage,
+    DataPublisher,
+    Dataset,
+    Entity,
+    ProgramIssuer,
+)
 from yente_client.schemas import (
+    describe_schema,
     has_schema,
     is_matchable_schema,
     iter_properties,
     matchable_schemata,
     model,
+    schema_index,
+    type_values,
 )
 
 _FORMAT_HELP = "Output format. `auto` (default) renders a table on a TTY and JSON when piped."
@@ -431,6 +440,91 @@ def datasets_command(
         print_table(rows, headers=["name", "title", "version", "current"])
 
 
+def _format_issuer(issuer: ProgramIssuer) -> str:
+    """Summarise a program's issuer as one line for the metadata table."""
+    label = issuer.name or issuer.acronym or "(unknown)"
+    if issuer.name and issuer.acronym:
+        label = f"{label} ({issuer.acronym})"
+    if issuer.territory:
+        label = f"{label} — {issuer.territory}"
+    return label
+
+
+def programs_command(
+    ctx: typer.Context,
+    key: str | None = typer.Argument(
+        None,
+        help="Optional program key (a `programId` value, e.g. `US-RUSHAR`). "
+        "When given, show that program's full metadata.",
+    ),
+    format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
+) -> None:
+    """List sanctions programs, or show one program's metadata.
+
+    Programs are the policy regimes sanctions designations are made under;
+    sanctioned entities name theirs in the `programId` property. Use this
+    to resolve those codes into a title, issuer, and policy summary. The
+    catalog is a public OpenSanctions data artifact — the fetch works
+    regardless of ``--base-url`` and needs no API key.
+    """
+    with _with_client(ctx) as client:
+        listing = client.programs()
+
+    if key is not None:
+        match = next((p for p in listing.data if p.key == key or key in p.aliases), None)
+        if match is None:
+            suggestion = difflib.get_close_matches(
+                key, [p.key for p in listing.data], n=1, cutoff=0.6
+            )
+            hint = f" Did you mean: {suggestion[0]}?" if suggestion else ""
+            typer.echo(
+                f"error: Unknown program {key!r}.{hint} Run `yente-cli programs` for the list.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        fmt = resolve_format(format_)
+        if fmt in (Format.JSON, Format.JSONL):
+            print_json(match)
+        else:
+            rows: list[list[Any]] = [["key", match.key], ["title", match.title or ""]]
+            if match.issuer is not None:
+                rows.append(["issuer", _format_issuer(match.issuer)])
+            if match.summary:
+                rows.append(["summary", match.summary.strip()])
+            if match.dataset:
+                rows.append(["dataset", match.dataset])
+            if match.aliases:
+                rows.append(["aliases", ", ".join(match.aliases)])
+            if match.target_territories:
+                rows.append(["target_territories", ", ".join(match.target_territories)])
+            if match.measures:
+                rows.append(["measures", ", ".join(match.measures)])
+            if match.url:
+                rows.append(["url", match.url])
+            print_table(rows, headers=["field", "value"], title=match.key)
+        return
+
+    fmt = resolve_format(format_)
+    if fmt == Format.JSON:
+        print_json(listing)
+    elif fmt == Format.JSONL:
+        print_jsonl(listing.data)
+    else:
+        table_rows = [
+            [
+                p.key,
+                _truncate(p.title or "", 60),
+                p.issuer.territory if p.issuer else "",
+            ]
+            for p in listing.data
+        ]
+        print_table(
+            table_rows,
+            headers=["key", "title", "territory"],
+            title=f"{len(listing.data)} program(s)",
+        )
+
+
 def statements_command(
     ctx: typer.Context,
     dataset: str | None = typer.Option(None, "--dataset", "-d", help="Restrict to one dataset."),
@@ -562,9 +656,11 @@ def fetch_command(
 ) -> None:
     """Fetch a single entity by ID.
 
-    Follows ``308`` redirects transparently when the supplied ID is a referent
-    of a canonical entity. The default (with ``nested=true``) returns related
-    entities inline; pass ``--no-nested`` for a lighter response.
+    Follows ``308`` redirects when the supplied ID is a referent of a canonical
+    entity — if the returned ``id`` differs from the one you passed, the entity
+    was merged; update stored references. The default (with ``nested=true``)
+    returns related entities inline; pass ``--no-nested`` for a lighter
+    response.
     """
     with _with_client(ctx) as client:
         entity = client.fetch(entity_id, nested=not no_nested)
@@ -595,7 +691,7 @@ def search_command(
         help="Filter by risk topic(s), e.g. `sanction`, `role.pep`. Repeatable.",
     ),
     countries: list[str] | None = typer.Option(
-        None, "--countries", help="Filter by ISO country code(s). Repeatable."
+        None, "--countries", help="Filter by country code(s) (see `ref countries`). Repeatable."
     ),
     filter_: list[str] | None = typer.Option(
         None,
@@ -752,11 +848,12 @@ def match_command(
 ) -> None:
     """Match a single entity (built from `-p` flags or `--from-file`) against a dataset.
 
-    This is the canonical command for ANY matching / record-linkage task,
-    including when you only have partial input (just a name, name + country,
-    etc.). `match` scores each candidate against the input and returns
-    explainable results. Don't reach for `search` when the input is sparse —
-    `search` is for human-typed search UIs, not for matching.
+    Query-by-example: describe the entity in as much detail as you can and
+    the API returns ranked, scored candidates with explanations. This is the
+    canonical command for ANY matching / record-linkage task, including when
+    you only have partial input (just a name, name + country, etc.). Don't
+    reach for `search` when the input is sparse — `search` is for human-typed
+    search UIs, not for matching.
 
     Exits 1 if no results returned, so shell scripts can gate on
     `yente-cli match … && …`.
@@ -899,22 +996,7 @@ def ref_schemas_command(
     values you can pass to `match` or `search`. For details on one schema,
     run ``ref schema NAME``.
     """
-    schemata = model["schemata"]
-    entries: list[dict[str, Any]] = []
-    for name in sorted(schemata):
-        defn = schemata[name]
-        if matchable_only and not defn.get("matchable"):
-            continue
-        entries.append(
-            {
-                "name": name,
-                "label": defn.get("label", ""),
-                "matchable": bool(defn.get("matchable", False)),
-                "abstract": bool(defn.get("abstract", False)),
-                "extends": list(defn.get("extends") or []),
-                "description": (defn.get("description") or "").strip(),
-            }
-        )
+    entries = schema_index(matchable_only=matchable_only)
 
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
@@ -925,10 +1007,10 @@ def ref_schemas_command(
         rows = [
             [
                 e["name"],
-                "✓" if e["matchable"] else "",
-                "abstract" if e["abstract"] else "",
-                ", ".join(e["extends"]),
-                _truncate(e["description"], 60),
+                "✓" if e.get("matchable") else "",
+                "edge" if e.get("edge") else "",
+                ", ".join(e.get("extends", [])),
+                _truncate(e.get("description", ""), 60),
             ]
             for e in entries
         ]
@@ -959,21 +1041,8 @@ def ref_schema_command(
         )
         raise typer.Exit(code=2)
 
-    schemata = model["schemata"]
-    defn = schemata[name]
-    properties = _collect_schema_properties(name)
-    summary: dict[str, Any] = {
-        "name": name,
-        "label": defn.get("label", ""),
-        "description": (defn.get("description") or "").strip(),
-        "matchable": bool(defn.get("matchable", False)),
-        "abstract": bool(defn.get("abstract", False)),
-        "extends": list(defn.get("extends") or []),
-        "schemata": list(defn.get("schemata") or []),
-        "featured": list(defn.get("featured") or []),
-        "required": list(defn.get("required") or []),
-        "properties": properties,
-    }
+    summary = describe_schema(name)
+    properties = summary["properties"]
 
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
@@ -982,30 +1051,39 @@ def ref_schema_command(
         # One property per line — useful for agents iterating over the prop list.
         print_jsonl(properties)
     else:
-        typer.echo(f"{name}  ({defn.get('label', '')})")
-        if summary["description"]:
+        typer.echo(name)
+        if summary.get("description"):
             typer.echo(summary["description"])
         typer.echo("")
-        typer.echo(f"  matchable:  {'yes' if summary['matchable'] else 'no'}")
-        typer.echo(f"  extends:    {', '.join(summary['extends']) or '(none)'}")
-        typer.echo(f"  featured:   {', '.join(summary['featured']) or '(none)'}")
-        typer.echo(f"  required:   {', '.join(summary['required']) or '(none)'}")
+        typer.echo(f"  matchable:  {'yes' if summary.get('matchable') else 'no'}")
+        typer.echo(f"  extends:    {', '.join(summary.get('extends', [])) or '(none)'}")
+        typer.echo(f"  featured:   {', '.join(summary.get('featured', [])) or '(none)'}")
+        if summary.get("edge"):
+            typer.echo("  edge:       yes")
         typer.echo("")
         rows = [
             [
                 p["name"],
                 p["type"],
-                "✓" if p["matchable"] else "",
-                "deprecated" if p["deprecated"] else "",
-                _truncate(p["description"], 50),
+                "✓" if p.get("matchable") else "",
+                _truncate(p.get("description", ""), 50),
             ]
             for p in properties
         ]
         print_table(
             rows,
-            headers=["property", "type", "matchable", "flags", "description"],
-            title=f"{len(properties)} property/properties (own + inherited)",
+            headers=["property", "type", "matchable", "description"],
+            title=f"{len(properties)} settable property/properties (own + inherited)",
         )
+        relations = summary.get("relations", [])
+        if relations:
+            typer.echo("")
+            rel_rows = [[r["name"], r.get("range", ""), r.get("reverse", "")] for r in relations]
+            print_table(
+                rel_rows,
+                headers=["relation", "points to", "reverse"],
+                title=f"{len(relations)} relationship edge(s) — traverse via the adjacency API",
+            )
         typer.echo("")
         typer.echo(
             "`matchable` is the FtM model's per-property flag. It is NOT a 'useful for matching'"
@@ -1017,50 +1095,6 @@ def ref_schema_command(
         typer.echo("as directly as matchable ones — through different code paths.")
 
 
-def _collect_schema_properties(name: str) -> list[dict[str, Any]]:
-    """Walk the ancestor chain and return one row per property name.
-
-    Mirrors ``scripts/regen_model.py``'s ``collect_properties`` shape so the
-    `ref schema` view matches what the codegen would generate. Stub
-    properties (reverse edges) are excluded — they're navigation-only.
-
-    Each row's ``matchable`` field resolves the FtM model's per-property
-    flag with type-level defaulting (``prop.matchable`` when set, else
-    ``type.matchable``). This flag governs one specific path through the
-    matcher (whether the property value is used as a candidate-filter
-    clause); non-matchable properties still drive scoring through other
-    paths (name reconstruction, alias cross-comparison, dedicated
-    mismatch features). Don't treat the flag as "useful for matching".
-    """
-    schemata = model["schemata"]
-    types = model.get("types", {})
-    seen: set[str] = set()
-    rows: list[dict[str, Any]] = []
-    for ancestor in schemata[name].get("schemata", [name]):
-        anc_props = schemata.get(ancestor, {}).get("properties", {})
-        for prop_name, prop_def in anc_props.items():
-            if prop_name in seen or prop_def.get("stub"):
-                continue
-            seen.add(prop_name)
-            prop_matchable = prop_def.get("matchable")
-            if prop_matchable is None:
-                type_def = types.get(prop_def.get("type", ""), {})
-                prop_matchable = type_def.get("matchable")
-            rows.append(
-                {
-                    "name": prop_name,
-                    "type": prop_def.get("type", "string"),
-                    "label": prop_def.get("label", ""),
-                    "description": (prop_def.get("description") or "").strip(),
-                    "deprecated": bool(prop_def.get("deprecated", False)),
-                    "matchable": bool(prop_matchable),
-                    "from_schema": ancestor,
-                }
-            )
-    rows.sort(key=lambda r: r["name"])
-    return rows
-
-
 def ref_topics_command(
     format_: Format = typer.Option(Format.AUTO, "--format", "-f", help=_FORMAT_HELP),
 ) -> None:
@@ -1069,8 +1103,9 @@ def ref_topics_command(
     Use these names with `-t` / `--topics` on `match` and `search`. Sourced
     from ``model.types["topic"].values`` in the bundled snapshot.
     """
-    topic_values = model["types"].get("topic", {}).get("values", {})
-    entries = [{"name": name, "label": label} for name, label in sorted(topic_values.items())]
+    entries = [
+        {"name": name, "label": label} for name, label in sorted(type_values("topic").items())
+    ]
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
         print_json(entries)
@@ -1090,8 +1125,9 @@ def ref_countries_command(
     country-typed properties (``country``, ``nationality``, ``birthCountry``,
     ``jurisdiction``, …). Sourced from ``model.types["country"].values``.
     """
-    country_values = model["types"].get("country", {}).get("values", {})
-    entries = [{"code": code, "name": name} for code, name in sorted(country_values.items())]
+    entries = [
+        {"code": code, "name": name} for code, name in sorted(type_values("country").items())
+    ]
     fmt = resolve_format(format_)
     if fmt == Format.JSON:
         print_json(entries)
@@ -1116,6 +1152,7 @@ def register(app: typer.Typer) -> None:
     """Attach all subcommands to ``app``."""
     app.command("status", epilog=_STATUS_EPILOG)(status_command)
     app.command("datasets", epilog=_DATASETS_EPILOG)(datasets_command)
+    app.command("programs", epilog=_PROGRAMS_EPILOG)(programs_command)
     app.command("statements", epilog=_STATEMENTS_EPILOG)(statements_command)
     app.command("algorithms", epilog=_ALGORITHMS_EPILOG)(algorithms_command)
     app.command("fetch", epilog=_FETCH_EPILOG)(fetch_command)
@@ -1186,6 +1223,25 @@ OUTPUT (with a dataset name + -f json):
 The `name` field is what you pass to `-d` / `--datasets` on match/search.
 """
 
+_PROGRAMS_EPILOG = """\
+EXAMPLES:
+  yente-cli programs                       # every program, table view
+  yente-cli programs -f jsonl              # one program per line
+  yente-cli programs US-RUSHAR             # full metadata for one program
+  yente-cli programs EU-UKR -f json        # one program, JSON for piping
+
+OUTPUT (no argument, with -f json):
+  {data: [{key, title, url, summary, dataset, issuer: {name, acronym,
+   organisation, territory}, aliases, target_territories, measures}, ...]}
+
+The `key` is what sanctioned entities carry in their `programId` property —
+use this command to resolve codes seen in match/search/fetch results into
+the program's title, issuer, and policy summary.
+
+Fetched from https://data.opensanctions.org/meta/programs.json (a public
+artifact, no API key needed), independent of --base-url.
+"""
+
 _STATEMENTS_EPILOG = """\
 EXAMPLES:
   yente-cli statements -c NK-aU5y... -f json              # all lineage for a canonical entity
@@ -1246,6 +1302,13 @@ OUTPUT (with -f json):
 
 Property values are always lists. With nested=true (default), entity-valued
 properties (sanctions, ownerships, family, ...) inline as nested Entity objects.
+
+MERGED IDS:
+  308 redirects are followed when the ID you pass was merged into another
+  entity during deduplication. If the returned `id` differs from the one
+  you requested, update your stored reference — the old ID stays resolvable
+  only while it remains in the entity's `referents` (the source-record and
+  superseded IDs that map to the canonical entity).
 """
 
 _SEARCH_EPILOG = """\
@@ -1282,6 +1345,9 @@ PROPERTY NAMES:
   Run `yente-cli ref schema Person` (or Company, Vessel, ...) to see what
   properties a schema accepts. Names are FtM camelCase: `firstName`, `birthDate`,
   `lastName`, `country`, `nationality` — not snake_case.
+  Country-typed values accept free text ("Russia") and are normalized
+  server-side. Matching works by value type, not field name — don't agonize
+  over `country` vs `jurisdiction`.
 
 SCHEMA CHOICE:
   Pick the most specific schema you can confidently set. A parent schema

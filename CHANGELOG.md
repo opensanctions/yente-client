@@ -8,6 +8,66 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`schemas.describe_schema()` / `schema_index()` / `schema_properties()` /
+  `property_matchable()` / `describe_type()` / `type_values()`** — a shared,
+  condensed FtM model projection (schemata, properties, and value types) used by
+  both `yente-cli ref` and the MCP `describe_schema`. Keeps the high-signal
+  fields (descriptions, `extends`, `range`/`reverse`) and drops structural cruft
+  (`label`/`plural`/flattened ancestor closure on schemata;
+  `maxLength`/`qname`/`deprecated`/`format` on properties), and omits empty
+  values. Boolean flags (`matchable`, `edge`) appear only when true, and
+  `matchable` resolves the FtM type default. `describe_schema` splits its fields
+  into `properties` (settable scalar attributes — the `match_entity` inputs) and
+  `relations` (entity-typed edges as compact `{name, range, reverse}` — the
+  `fetch_entity_relations` targets).
+
+- **`Statement.origin`** — how a claim was produced (`"inferred"`, `"patch"`,
+  …; unset for plain crawled data), previously dropped when parsing the
+  `/statements` wire format.
+
+- **`Client.programs()` / `AsyncClient.programs()`** — fetch the
+  sanctions-program catalog (`Program` / `ProgramIssuer` / `ProgramsResponse`
+  models), resolving the `programId` codes sanctioned entities carry into
+  program title, issuer, policy summary, and measures. Served from the public
+  artifact at `PROGRAMS_URL` (data.opensanctions.org), independent of
+  `base_url`.
+
+- **ETag revalidation** for `programs()` and `datasets()`: clients keep a
+  per-URL `(etag, body)` pair and send `If-None-Match`, serving the held body
+  on `304 Not Modified`. Transparent — servers without `ETag` support (yente's
+  `/catalog` today, see opensanctions/yente#1202) get plain-fetch behavior.
+
+- **`yente-cli programs [KEY]`** — list sanctions programs, or show one
+  program's full metadata; `KEY` also resolves via program aliases.
+
+- **Documentation site** published at
+  [yenteclient.followthemoney.tech](https://yenteclient.followthemoney.tech/)
+  (GitHub Pages, deployed from `main`), including a new MCP server page. The
+  repository and package now carry the MIT license text (the metadata already
+  declared MIT).
+
+### Changed
+
+- `yente-cli ref schemas` / `ref schema NAME` output is leaner (the projection
+  above): the `abstract`/`required`/`deprecated` columns/fields are gone.
+
+- **MCP server** (`yente-mcp`, `pip install 'yente-client[mcp]'`): exposes the
+  matching surface to LLM agents over the Model Context Protocol as five
+  entity tools (`match_entity`, `search_entities`, `fetch_entity_by_id`,
+  `fetch_entity_relations`, `fetch_entity_statements`) plus `describe_*`
+  lookup tools (`describe_schema`, `describe_topics`, `describe_countries`,
+  `describe_dataset`, `describe_program`) and `ftm://` resources, built on
+  `AsyncClient`. Every code in entity-bearing results resolves inline: topic
+  and country labels from the bundled model, dataset and program titles as
+  attached `dataset_titles` / `program_titles` legends (cached live lookups,
+  failure-soft); matching algorithms are deliberately not exposed (server
+  default applies). Runs over streamable-HTTP; auth is bearer-token pass-through (the
+  token is the caller's OpenSanctions API key, forwarded downstream).
+  Skeleton — the schema/model surface and response shaping are covered by
+  tests; the network tools are not yet exercised end-to-end.
+
 ## [0.1.0] - 2026-06-07
 
 First public release of the `yente-client` Python SDK and the `yente-cli`

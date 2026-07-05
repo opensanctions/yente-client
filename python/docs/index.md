@@ -1,9 +1,9 @@
 # yente-client documentation
 
-The yente-client Python SDK and `yente-cli` command-line tool for
-matching entities against the [OpenSanctions API](https://www.opensanctions.org)
-and on-premise [yente](https://github.com/opensanctions/yente)
-instances.
+The yente-client Python SDK, `yente-cli` command-line tool, and
+`yente-mcp` MCP server for matching entities against the
+[OpenSanctions API](https://www.opensanctions.org) and on-premise
+[yente](https://github.com/opensanctions/yente) instances.
 
 ## Start here
 
@@ -12,6 +12,8 @@ instances.
   [FollowTheMoney](https://followthemoney.tech/) (FtM) data model.
 - **[CLI overview](cli.md)** — the `yente-cli` command, when to reach
   for it, the command list, output formats, exit codes.
+- **[MCP server](mcp.md)** — expose screening to LLM agents: install,
+  run, connect a client, the tool surface.
 - **[API reference](api/index.md)** — auto-generated from docstrings;
   every public symbol re-exported from `yente_client`.
 

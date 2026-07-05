@@ -3,15 +3,21 @@
 Python SDK for the [OpenSanctions](https://www.opensanctions.org) API and
 on-premise [yente](https://github.com/opensanctions/yente) instances.
 
+Full documentation, including the tutorial and API reference, lives at
+[yenteclient.followthemoney.tech](https://yenteclient.followthemoney.tech/).
+
 ## Install
 
 ```bash
 pip install yente-client            # SDK only
-pip install yente-client[cli]       # SDK + `yente-cli` command-line tool
+pip install 'yente-client[cli]'     # SDK + `yente-cli` command-line tool
+pip install 'yente-client[mcp]'     # SDK + `yente-mcp` server for LLM agents
 ```
 
 Python 3.11+; runtime deps are `pydantic` and `httpx`. The `[cli]` extra
-adds `typer` and `rich`.
+adds `typer` and `rich`; the `[mcp]` extra adds `fastmcp`. The
+[MCP server](https://yenteclient.followthemoney.tech/mcp/) exposes the
+matching surface to LLM agents over the Model Context Protocol.
 
 ## Quickstart
 
@@ -48,6 +54,7 @@ for sanction in entity.properties.get("sanctions", []):
 
 # Operational endpoints
 c.datasets()      # available datasets and freshness
+c.programs()      # sanctions-program catalog (resolves programId codes)
 c.algorithms()    # enabled matching algorithms
 c.healthz()       # liveness
 ```
@@ -105,11 +112,12 @@ yente-cli fetch NK-aU5ybkbRFJucf8YMwsJvDw
 yente-cli ref schemas                   # all schemas with matchable flags
 yente-cli ref schema Person -f json     # full property list, types, deprecation
 yente-cli ref topics                    # the Topic enum
-yente-cli ref countries                 # ISO country codes the server speaks
+yente-cli ref countries                 # country codes the server speaks
 
 # Discover server state:
 yente-cli status                        # client + server + auth + loaded datasets
 yente-cli datasets                      # full per-source dataset list
+yente-cli programs                      # sanctions programs behind programId codes
 yente-cli algorithms                    # enabled algorithms, default + best
 ```
 

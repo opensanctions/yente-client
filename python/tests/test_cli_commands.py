@@ -14,6 +14,7 @@ import respx
 from typer.testing import CliRunner
 
 from yente_client.cli.main import app
+from yente_client.client import PROGRAMS_URL
 
 
 @pytest.fixture
@@ -222,6 +223,49 @@ def test_datasets_unknown_name_suggests_close_match(runner, load_fixture) -> Non
     err = result.stdout + result.stderr
     assert "Unknown dataset" in err
     assert "default" in err  # fuzzy suggestion
+
+
+# ---------- programs ----------
+
+
+def test_programs_table(runner, load_fixture) -> None:
+    """`programs` hits the public artifact URL, not the --base-url host."""
+    with respx.mock() as mock:
+        mock.get(PROGRAMS_URL).mock(return_value=httpx.Response(200, json=load_fixture("programs")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "programs", "-f", "table"])
+    assert result.exit_code == 0
+    assert "US-RUSHAR" in result.stdout
+    assert "EU-UKR" in result.stdout
+
+
+def test_programs_single_table(runner, load_fixture) -> None:
+    with respx.mock() as mock:
+        mock.get(PROGRAMS_URL).mock(return_value=httpx.Response(200, json=load_fixture("programs")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "programs", "US-RUSHAR", "-f", "table"])
+    assert result.exit_code == 0
+    assert "OFAC" in result.stdout
+    assert "Asset freeze" in result.stdout
+    assert "us_ofac_sdn" in result.stdout
+
+
+def test_programs_single_json_resolves_alias(runner, load_fixture) -> None:
+    """An alias (e.g. an OFAC program tag) resolves to the canonical record."""
+    with respx.mock() as mock:
+        mock.get(PROGRAMS_URL).mock(return_value=httpx.Response(200, json=load_fixture("programs")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "programs", "RUSSIA-EO14024", "-f", "json"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["key"] == "US-RUSHAR"
+
+
+def test_programs_unknown_key_suggests_close_match(runner, load_fixture) -> None:
+    with respx.mock() as mock:
+        mock.get(PROGRAMS_URL).mock(return_value=httpx.Response(200, json=load_fixture("programs")))
+        result = runner.invoke(app, [*_BASE_FLAGS, "programs", "US-RUSHARR"])
+    assert result.exit_code == 2
+    err = result.stdout + result.stderr
+    assert "Unknown program" in err
+    assert "US-RUSHAR" in err  # fuzzy suggestion
 
 
 # ---------- statements ----------

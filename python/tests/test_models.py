@@ -108,6 +108,27 @@ def test_scored_entity() -> None:
     assert se.explanations["name_match"].score == 0.9
 
 
+def test_contributing_explanations_drops_zero_keeps_negative() -> None:
+    se = ScoredEntity.model_validate(
+        {
+            "id": "Q1",
+            "caption": "Match",
+            "schema": "Person",
+            "score": 0.4,
+            "match": False,
+            "explanations": {
+                "name_match": {"score": 0.6},
+                "dob_disjoint": {"score": -0.95},
+                "not_applicable": {"score": 0.0},
+            },
+        }
+    )
+    contributing = se.contributing_explanations
+    assert set(contributing) == {"name_match", "dob_disjoint"}
+    # raw explanations is left intact
+    assert "not_applicable" in se.explanations
+
+
 def test_match_response_top_with_results() -> None:
     mr = MatchResponse.model_validate(
         {

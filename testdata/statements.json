@@ -11,6 +11,7 @@
       "original_value": "John Doe (Esq.)",
       "dataset": "us_ofac_sdn",
       "lang": "eng",
+      "origin": "patch",
       "first_seen": "2024-03-12T08:14:22+00:00",
       "last_seen": "2026-05-30T01:42:00+00:00"
     },

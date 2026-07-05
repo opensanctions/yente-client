@@ -11,7 +11,6 @@
 """
 
 import json
-import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -19,6 +18,7 @@ import httpx
 import pytest
 from dotenv import load_dotenv
 
+from yente_client import env
 from yente_client.async_client import AsyncClient
 from yente_client.client import Client
 
@@ -92,20 +92,20 @@ def live_client() -> Iterator[Client]:
     (``api.opensanctions.org``). Local dev usually points at the test
     instance via ``.env``; CI sets ``YENTE_BASE_URL`` explicitly via secrets.
     """
-    key = os.environ.get("OPENSANCTIONS_API_KEY")
+    key = env.api_key()
     if not key:
         pytest.skip("OPENSANCTIONS_API_KEY not set; skipping live tests")
-    base_url = os.environ.get("YENTE_BASE_URL", "https://api.opensanctions.org")
-    with Client(api_key=key, base_url=base_url, app_name="yenteclient-tests") as client:
+    with Client(api_key=key, base_url=env.base_url(), app_name="yenteclient-tests") as client:
         yield client
 
 
 @pytest.fixture
 async def live_async_client():
     """Async counterpart to ``live_client``. Skips on missing key."""
-    key = os.environ.get("OPENSANCTIONS_API_KEY")
+    key = env.api_key()
     if not key:
         pytest.skip("OPENSANCTIONS_API_KEY not set; skipping live tests")
-    base_url = os.environ.get("YENTE_BASE_URL", "https://api.opensanctions.org")
-    async with AsyncClient(api_key=key, base_url=base_url, app_name="yenteclient-tests") as client:
+    async with AsyncClient(
+        api_key=key, base_url=env.base_url(), app_name="yenteclient-tests"
+    ) as client:
         yield client

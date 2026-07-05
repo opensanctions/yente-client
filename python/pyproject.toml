@@ -30,6 +30,9 @@ cli = [
     "typer>=0.12",
     "rich>=13",
 ]
+mcp = [
+    "fastmcp>=3.4",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -43,19 +46,26 @@ dev = [
     # extra install. Mirrors yente-client[cli].
     "typer>=0.12",
     "rich>=13",
+    # MCP server deps so `make test` can import yente_client.mcp.server.
+    # Mirrors yente-client[mcp].
+    "fastmcp>=3.4",
     # Docs build (`make docs`): mkdocs + Material theme + mkdocstrings extracts
     # docstrings inline at build time; no separate regeneration step needed.
-    "mkdocs>=1.6",
-    "mkdocs-material>=9.5",
-    "mkdocstrings[python]>=0.26",
+    "yente-client[docs]",
     # Version bumper. Mirrors the toolchain in ../yente (and pinned to the
     # same release for cross-repo muscle memory). Run from the repo root:
     #     bump2version --verbose minor   # or patch / major
     "bump2version == 1.0.1",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+]
 
 [project.scripts]
 yente-cli = "yente_client.cli.main:main"
+yente-mcp = "yente_client.mcp.main:main"
 
 [project.urls]
 Homepage = "https://github.com/opensanctions/yente-client"

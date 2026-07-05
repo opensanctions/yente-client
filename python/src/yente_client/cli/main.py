@@ -5,28 +5,23 @@ The Typer app is configured here; the subcommands themselves live in
 ``pyproject.toml``'s ``[project.scripts]`` entry calls.
 """
 
+from yente_client import env
 from yente_client.cli._deps import typer
 from yente_client.cli.commands import register
-from yente_client.cli.config import _DEFAULT_BASE_URL, CliConfig
+from yente_client.cli.config import CliConfig
 
 app = typer.Typer(
     name="yente-cli",
     help=(
         "OpenSanctions / yente API client.\n"
         "\n"
-        "WORKFLOWS:\n"
-        "  Match / screen an entity (any matching task): match -s Person -p firstName=…\n"
-        "  Fetch one entity by ID:                       fetch <id>\n"
-        "  Power a user-facing search UI:                search 'acme' -d default\n"
-        "  Discover the data model (offline):            ref schemas, ref schema Person\n"
-        "  Discover the server:                          datasets, algorithms\n"
-        "\n"
         "PICK A COMMAND:\n"
-        "  Identifying an entity (ANY matching task)?  → match\n"
-        "  Have an ID already?                         → fetch\n"
-        "  Backing a search box / browse UI?           → search\n"
-        "  Not sure what's queryable?                  → ref schemas\n"
+        "  Identifying an entity (ANY matching task)?  → match -s Person -p firstName=…\n"
+        "  Have an ID already?                         → fetch <id>\n"
+        "  Backing a search box / browse UI?           → search 'acme' -d default\n"
+        "  Not sure what's queryable?                  → ref schemas, ref schema Person\n"
         "  What datasets / algorithms exist?           → datasets, algorithms\n"
+        "  What's behind a `programId` code?           → programs\n"
         "\n"
         "NOTE: any matching task uses `match`, even with partial input\n"
         "(name only, name+country, etc.). `search` is purely for human-typed\n"
@@ -47,14 +42,14 @@ def _app_callback(
     api_key: str | None = typer.Option(
         None,
         "--api-key",
-        envvar="OPENSANCTIONS_API_KEY",
+        envvar=env.API_KEY_VAR,
         show_envvar=True,
         help="API key for the OpenSanctions API. Falls back to env.",
     ),
     base_url: str = typer.Option(
-        _DEFAULT_BASE_URL,
+        env.DEFAULT_BASE_URL,
         "--base-url",
-        envvar="YENTE_BASE_URL",
+        envvar=env.BASE_URL_VAR,
         show_envvar=True,
         help="API root. Use to target a yente instance.",
     ),

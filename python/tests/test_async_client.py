@@ -23,6 +23,7 @@ from yente_client.models import (
     DatasetsResponse,
     Entity,
     MatchResponse,
+    ProgramsResponse,
     SearchResponse,
     StatusResponse,
 )
@@ -77,6 +78,27 @@ async def test_async_datasets(make_async_client, load_fixture) -> None:
         r = await c.datasets()
     assert isinstance(r, DatasetsResponse)
     assert r.datasets[0].name == "default"
+
+
+async def test_async_programs(make_async_client, load_fixture) -> None:
+    async with make_async_client(handler=_fixed(load_fixture("programs"))) as c:
+        r = await c.programs()
+    assert isinstance(r, ProgramsResponse)
+    assert [p.key for p in r.data] == ["US-RUSHAR", "EU-UKR"]
+
+
+async def test_async_programs_revalidates_with_etag(make_async_client, load_fixture) -> None:
+    payload = load_fixture("programs")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("If-None-Match") == '"v1"':
+            return httpx.Response(304)
+        return httpx.Response(200, json=payload, headers={"ETag": '"v1"'})
+
+    async with make_async_client(handler=handler) as c:
+        first = await c.programs()
+        second = await c.programs()  # served from the held body via 304
+    assert [p.key for p in second.data] == [p.key for p in first.data]
 
 
 async def test_async_fetch(make_async_client, load_fixture) -> None:
