@@ -35,6 +35,7 @@ To point at a yente instance, set `YENTE_BASE_URL` or pass
 | Command | One-line |
 |---|---|
 | `match` | Match a single entity (built from `-p key=value` flags or `--from-file`) against a dataset. The canonical command for any matching task. |
+| `screen` | Batch-screen a CSV of entities: map columns to properties, run concurrent matches, write one output row per candidate. |
 | `search` | Free-text search across one or more datasets, for backing user-facing search UIs. |
 | `fetch` | Fetch one entity by ID. |
 | `datasets` | List indexed datasets and their freshness. |
@@ -69,6 +70,22 @@ Every command takes `-f` / `--format`:
 | `2` | Usage error: bad flag, unknown schema, malformed `-p key=value`. |
 | `3` | API error: non-2xx response. |
 | `4` | Transport error: network, timeout, TLS. |
+| `5` | `screen` only: the run completed, but some rows failed (see the `match_error` column). |
+
+## Batch screening a CSV
+
+`screen` is the bulk counterpart of `match`: point it at a CSV, map
+columns to FtM properties with `-i COLUMN=prop`, and it runs concurrent
+match queries and writes one output row per candidate — input columns
+passed through, results in `match_`-prefixed columns:
+
+```bash
+yente-cli screen customers.csv -s Person -i full_name=name -i born=birthDate
+```
+
+The [screening tutorial](screening.md) walks the whole workflow:
+column mapping, reading the output, threshold/cutoff triage, mixed-file
+schemas, and error handling. `yente-cli screen --help` lists every flag.
 
 ## Worked examples
 
@@ -85,6 +102,13 @@ yente-cli match -s Person \
 
 # From a JSON file (the wire-format match query):
 yente-cli match -s Person -i query.json -d sanctions
+
+# Batch-screen a CSV: map columns to FtM properties, get a candidates CSV back.
+# Writes customers.out.csv; all input columns pass through, candidates arrive
+# in match_-prefixed columns (one output row per candidate).
+yente-cli screen customers.csv -s Person \
+  -i full_name=name -i born=birthDate \
+  -d sanctions --match --url
 
 # Free-text search for a company
 yente-cli search "acme" -d default -s Company -l 10

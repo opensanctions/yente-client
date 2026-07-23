@@ -24,6 +24,7 @@ def _bail(missing: str) -> None:
 
 try:
     import typer
+    from typer.core import TyperCommand
 except ImportError:
     _bail("typer")
 
@@ -34,4 +35,4 @@ except ImportError:
     _bail("rich")
 
 
-__all__ = ["Console", "Table", "typer"]
+__all__ = ["Console", "Table", "TyperCommand", "typer"]

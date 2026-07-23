@@ -234,9 +234,9 @@ warrants a `CHANGELOG.md` line.
 
 - Lives under `python/docs/`, built with **mkdocs + mkdocs-material +
   mkdocstrings**.
-- Four hand-written pages: `index.md`, `tutorial.md`, `cli.md`, `mcp.md`.
-  They are the only prose pages — keep additions inside this small set
-  unless the surface justifies a new file.
+- Five hand-written pages: `index.md`, `tutorial.md`, `screening.md`,
+  `cli.md`, `mcp.md`. They are the only prose pages — keep additions inside
+  this small set unless the surface justifies a new file.
 - Published to https://yenteclient.followthemoney.tech/ via GitHub Pages
   (`.github/workflows/docs.yml`, deploys on push to `main`).
 - The `api/` tree is a set of thin `:::`-directive stubs; mkdocstrings

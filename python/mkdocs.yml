@@ -46,6 +46,7 @@ plugins:
 nav:
   - Home: index.md
   - Tutorial: tutorial.md
+  - Screening a file: screening.md
   - CLI overview: cli.md
   - MCP server: mcp.md
   - API reference:

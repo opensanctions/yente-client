@@ -17,7 +17,7 @@ from typing import Any, cast
 from pydantic import ValidationError
 
 from yente_client import entities
-from yente_client.cli._deps import typer
+from yente_client.cli._deps import TyperCommand, typer
 from yente_client.cli.config import CliConfig
 from yente_client.cli.output import (
     Format,
@@ -913,13 +913,10 @@ def match_command(
         raise typer.Exit(code=1)
 
 
-def _build_entity_input(schema: str, properties: list[str], from_file: Path | None) -> EntityInput:
-    """Construct a per-schema entity from CLI inputs.
+def _resolve_matchable_schema(schema: str, command: str = "match") -> type[EntityInput]:
+    """Resolve a schema name to its entity class; exit 2 if unknown or non-matchable.
 
-    Properties from ``--from-file`` are loaded first; ``-p KEY=VALUE`` flags
-    are then layered on top (later wins on first set, same-key repeats append).
-    The resulting dict is passed to the per-schema class — Pydantic enforces
-    property-name validity via ``extra="forbid"``.
+    ``command`` names the invoking subcommand in the error message.
     """
     schema_cls = getattr(entities, schema, None)
     if schema_cls is None or not isinstance(schema_cls, type):
@@ -934,12 +931,25 @@ def _build_entity_input(schema: str, properties: list[str], from_file: Path | No
     if not is_matchable_schema(schema):
         options = ", ".join(matchable_schemata()[:6])
         typer.echo(
-            f"error: Schema {schema!r} is not a matchable target for `match`. "
+            f"error: Schema {schema!r} is not a matchable target for `{command}`. "
             f"Try a matchable schema like {options}, … "
             f"(run `yente-cli ref schemas --matchable` for the full list).",
             err=True,
         )
         raise typer.Exit(code=2)
+
+    return cast(type[EntityInput], schema_cls)
+
+
+def _build_entity_input(schema: str, properties: list[str], from_file: Path | None) -> EntityInput:
+    """Construct a per-schema entity from CLI inputs.
+
+    Properties from ``--from-file`` are loaded first; ``-p KEY=VALUE`` flags
+    are then layered on top (later wins on first set, same-key repeats append).
+    The resulting dict is passed to the per-schema class — Pydantic enforces
+    property-name validity via ``extra="forbid"``.
+    """
+    schema_cls = _resolve_matchable_schema(schema)
 
     props: dict[str, list[str]] = {}
     if from_file is not None:
@@ -963,7 +973,7 @@ def _build_entity_input(schema: str, properties: list[str], from_file: Path | No
         props.setdefault(key, []).append(value)
 
     try:
-        return cast(EntityInput, schema_cls(**props))
+        return schema_cls.model_validate(props)
     except ValidationError as exc:
         # If any error is a known-extra-fields-forbidden case, try to suggest
         # the closest valid property name for the agent reading the message.
@@ -1148,24 +1158,53 @@ def _truncate(text: str, max_len: int) -> str:
 # ----- registration -----
 
 
+class _VerbatimEpilogCommand(TyperCommand):
+    """Print the epilog exactly as written.
+
+    Typer's rich help rewraps epilog paragraphs (single newlines become
+    spaces), which destroys the EXAMPLES / OUTPUT / EXIT CODES blocks. Hide
+    the epilog from the rich renderer, then emit it untouched — the blocks
+    are pre-formatted for an 80-column terminal and for agents reading raw
+    text.
+    """
+
+    # Params typed Any: the real types are click's Context / HelpFormatter,
+    # but importing click at module top would bypass the _deps install guard.
+    def format_help(self, ctx: Any, formatter: Any) -> None:
+        epilog, self.epilog = self.epilog, None
+        try:
+            super().format_help(ctx, formatter)
+        finally:
+            self.epilog = epilog
+        if epilog:
+            typer.echo("\n " + epilog.rstrip("\n").replace("\n", "\n "))
+
+
 def register(app: typer.Typer) -> None:
     """Attach all subcommands to ``app``."""
-    app.command("status", epilog=_STATUS_EPILOG)(status_command)
-    app.command("datasets", epilog=_DATASETS_EPILOG)(datasets_command)
-    app.command("programs", epilog=_PROGRAMS_EPILOG)(programs_command)
-    app.command("statements", epilog=_STATEMENTS_EPILOG)(statements_command)
-    app.command("algorithms", epilog=_ALGORITHMS_EPILOG)(algorithms_command)
-    app.command("fetch", epilog=_FETCH_EPILOG)(fetch_command)
-    app.command("search", epilog=_SEARCH_EPILOG)(search_command)
-    app.command("match", epilog=_MATCH_EPILOG)(match_command)
+    cls = _VerbatimEpilogCommand
+    app.command("status", cls=cls, epilog=_STATUS_EPILOG)(status_command)
+    app.command("datasets", cls=cls, epilog=_DATASETS_EPILOG)(datasets_command)
+    app.command("programs", cls=cls, epilog=_PROGRAMS_EPILOG)(programs_command)
+    app.command("statements", cls=cls, epilog=_STATEMENTS_EPILOG)(statements_command)
+    app.command("algorithms", cls=cls, epilog=_ALGORITHMS_EPILOG)(algorithms_command)
+    app.command("fetch", cls=cls, epilog=_FETCH_EPILOG)(fetch_command)
+    app.command("search", cls=cls, epilog=_SEARCH_EPILOG)(search_command)
+    app.command("match", cls=cls, epilog=_MATCH_EPILOG)(match_command)
+
+    # Imported here: screen.py imports shared helpers from this module, so a
+    # top-level import would be circular.
+    from yente_client.cli.screen import _SCREEN_EPILOG, screen_command
+
+    app.command("screen", cls=cls, epilog=_SCREEN_EPILOG)(screen_command)
 
     ref_app = typer.Typer(
         name="ref",
         help="Inspect the bundled FtM model (offline; no API key required).",
         no_args_is_help=True,
     )
-    ref_app.command("schemas", epilog=_REF_SCHEMAS_EPILOG)(ref_schemas_command)
-    ref_app.command("schema", epilog=_REF_SCHEMA_EPILOG)(ref_schema_command)
+    ref_app.command("schemas", cls=cls, epilog=_REF_SCHEMAS_EPILOG)(ref_schemas_command)
+    ref_app.command("schema", cls=cls, epilog=_REF_SCHEMA_EPILOG)(ref_schema_command)
     ref_app.command("topics")(ref_topics_command)
     ref_app.command("countries")(ref_countries_command)
     app.add_typer(ref_app, name="ref")
