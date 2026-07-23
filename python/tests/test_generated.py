@@ -37,6 +37,21 @@ def test_person_str_to_list_coercion() -> None:
     assert p.firstName == ["X"]
 
 
+def test_person_none_means_unset() -> None:
+    # Callers mapping optional sources (CSV cells, nullable columns) pass
+    # None through without guards; the property is omitted from the payload.
+    p = Person(name="X", birthDate=None)
+    assert p.birthDate == []
+    assert "birthDate" not in p.to_payload()["properties"]
+
+
+def test_person_none_id_stays_none() -> None:
+    # The id field is not a property; the list coercion must not touch it.
+    p = Person(name="X", id=None)
+    assert p.id is None
+    assert "id" not in p.to_payload()
+
+
 def test_person_unknown_property_rejected() -> None:
     with pytest.raises(ValidationError):
         Person(notAProperty="X")

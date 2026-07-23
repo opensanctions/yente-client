@@ -1,6 +1,8 @@
 """Synchronous yente / OpenSanctions client."""
 
-from typing import Any, Final, Self, overload
+from collections.abc import Iterable, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from typing import Any, Final, Literal, Self, overload
 from urllib.parse import quote
 
 import httpx
@@ -22,6 +24,7 @@ from yente_client.models import (
     AlgorithmsResponse,
     DatasetsResponse,
     Entity,
+    MatchError,
     MatchResponse,
     ProgramsResponse,
     SearchResponse,
@@ -52,6 +55,42 @@ def _check_matchable_schema(entity: EntityInput) -> None:
         f"Use a matchable schema like {options} "
         f"(run `yente-cli ref schemas --matchable` for the full list)."
     )
+
+
+def _prepare_match_query(
+    filters: MatchFilters | None,
+    filter_kwargs: dict[str, Any],
+    *,
+    threshold: float | None,
+    cutoff: float | None,
+    algorithm: str | None,
+    limit: int | None,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve filters and scoring params into the /match dataset path and query params."""
+    f = merge_filters(MatchFilters, filters, filter_kwargs)
+    dataset, params = serialise_match_filters(f)
+    if threshold is not None:
+        params["threshold"] = threshold
+    if cutoff is not None:
+        params["cutoff"] = cutoff
+    if algorithm is not None:
+        params["algorithm"] = algorithm
+    if limit is not None:
+        params["limit"] = limit
+    return dataset, params
+
+
+def _match_body(
+    entity: EntityInput,
+    weights: dict[str, float] | None,
+    config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the single-query POST body for /match."""
+    return {
+        "queries": {"q": entity.to_payload()},
+        "weights": weights or {},
+        "config": config or {},
+    }
 
 
 class Client:
@@ -399,6 +438,7 @@ class Client:
         *,
         filters: MatchFilters | None = None,
         threshold: float | None = None,
+        cutoff: float | None = None,
         algorithm: str | None = None,
         weights: dict[str, float] | None = None,
         config: dict[str, Any] | None = None,
@@ -415,6 +455,10 @@ class Client:
         kwargs win on any field they specify.
 
         Args:
+            threshold: Score at or above which a result's ``match`` flag is
+                set (server default 0.70). Does not remove results.
+            cutoff: Score below which candidates are dropped from the
+                response entirely (server default 0.50).
             algorithm: Server-side algorithm name. Common values: ``"best"``
                 (use ``BEST_ALGORITHM``), ``"logic-v2"``, ``"name-matcher"``.
                 The full set is dynamic via :meth:`algorithms`.
@@ -426,22 +470,107 @@ class Client:
                 round-trip to give a clearer error.
         """
         _check_matchable_schema(entity)
-        f = merge_filters(MatchFilters, filters, filter_kwargs)
-        dataset, params = serialise_match_filters(f)
-
-        if threshold is not None:
-            params["threshold"] = threshold
-        if algorithm is not None:
-            params["algorithm"] = algorithm
-        if limit is not None:
-            params["limit"] = limit
-
-        body: dict[str, Any] = {
-            "queries": {"q": entity.to_payload()},
-            "weights": weights or {},
-            "config": config or {},
-        }
+        dataset, params = _prepare_match_query(
+            filters,
+            filter_kwargs,
+            threshold=threshold,
+            cutoff=cutoff,
+            algorithm=algorithm,
+            limit=limit,
+        )
+        body = _match_body(entity, weights, config)
 
         raw = self._request("POST", f"/match/{quote(dataset, safe='')}", params=params, json=body)
 
         return MatchResponse.model_validate(unwrap_match_response(raw))
+
+    def match_iter(
+        self,
+        entities: Iterable[tuple[str, EntityInput]],
+        *,
+        workers: int = 4,
+        filters: MatchFilters | None = None,
+        threshold: float | None = None,
+        cutoff: float | None = None,
+        algorithm: str | None = None,
+        weights: dict[str, float] | None = None,
+        config: dict[str, Any] | None = None,
+        limit: int | None = None,
+        on_error: Literal["raise", "collect"] = "raise",
+        **filter_kwargs: Any,
+    ) -> Iterator[tuple[str, MatchResponse | MatchError]]:
+        """Stream /match calls over many entities with bounded concurrency.
+
+        The batch-screening primitive: feed any iterable of ``(key, entity)``
+        pairs — a lazy generator over a file works — and results stream back
+        as ``(key, response)`` pairs with at most ``workers`` requests in
+        flight. New work is only pulled from the iterable as results are
+        consumed, so memory stays flat regardless of input size. One entity
+        per request by design; there is no wire-level batching.
+
+        Args:
+            entities: ``(key, entity)`` pairs. Results arrive in completion
+                order, not input order — the key ties a result back to its
+                input row.
+            workers: Maximum concurrent requests.
+            on_error: ``"raise"`` (default) aborts the stream on the first
+                failed item. ``"collect"`` yields ``(key, MatchError)`` for
+                the failed item and keeps going — use for long runs that
+                must survive individual failures.
+
+        Yields:
+            ``(key, MatchResponse)`` per input pair; with
+            ``on_error="collect"``, failed pairs surface as
+            ``(key, MatchError)`` instead.
+        """
+        if workers < 1:
+            raise ValueError(f"workers must be >= 1, got {workers}")
+        dataset, params = _prepare_match_query(
+            filters,
+            filter_kwargs,
+            threshold=threshold,
+            cutoff=cutoff,
+            algorithm=algorithm,
+            limit=limit,
+        )
+        path = f"/match/{quote(dataset, safe='')}"
+
+        def run_one(entity: EntityInput) -> MatchResponse:
+            _check_matchable_schema(entity)
+            raw = self._request(
+                "POST", path, params=params, json=_match_body(entity, weights, config)
+            )
+            return MatchResponse.model_validate(unwrap_match_response(raw))
+
+        pairs = iter(entities)
+        pending: dict[Future[MatchResponse], str] = {}
+        executor = ThreadPoolExecutor(max_workers=workers)
+        try:
+            exhausted = False
+            while True:
+                while not exhausted and len(pending) < workers:
+                    try:
+                        key, entity = next(pairs)
+                    except StopIteration:
+                        exhausted = True
+                        break
+                    pending[executor.submit(run_one, entity)] = key
+                if not pending:
+                    break
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    key = pending.pop(future)
+                    result: MatchResponse | MatchError
+                    try:
+                        result = future.result()
+                    # The "collect" contract is total: any per-item failure
+                    # (transport, API, validation) must come back in-band.
+                    except Exception as exc:
+                        if on_error == "raise":
+                            raise
+                        result = MatchError(key=key, exception=exc)
+                    yield key, result
+        finally:
+            # Block until in-flight requests finish so a caller's
+            # `with Client(...)` exit can't close the transport under them.
+            executor.shutdown(wait=True, cancel_futures=True)

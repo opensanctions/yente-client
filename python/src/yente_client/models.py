@@ -11,6 +11,7 @@ release that adds it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -124,6 +125,20 @@ class MatchResponse(BaseModel):
     def matches(self) -> list[ScoredEntity]:
         """Results with ``match=True`` (score crossed the threshold)."""
         return [r for r in self.results if r.match]
+
+
+@dataclass(frozen=True)
+class MatchError:
+    """A failed item in a ``match_iter`` stream, returned in-band.
+
+    With ``on_error="collect"`` a long batch run keeps going past
+    individual failures; each one surfaces as a ``(key, MatchError)``
+    pair instead of raising, so the caller can log or retry that row
+    without losing the rest of the stream. Never raised.
+    """
+
+    key: str
+    exception: Exception
 
 
 class SearchFacetItem(BaseModel):

@@ -101,6 +101,6 @@ def test_schema_classvar() -> None:
 def test_ensure_list_directly() -> None:
     assert _ensure_list("a") == ["a"]
     assert _ensure_list(["a", "b"]) == ["a", "b"]
-    assert _ensure_list(None) is None
+    assert _ensure_list(None) == []  # None means "unset"
     with pytest.raises(ValueError):
         _ensure_list(42)

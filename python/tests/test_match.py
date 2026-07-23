@@ -134,6 +134,13 @@ def test_match_threshold_passes_as_query_param(make_client, load_fixture) -> Non
     assert seen[0].url.params.get("threshold") == "0.85"
 
 
+def test_match_cutoff_passes_as_query_param(make_client, load_fixture) -> None:
+    handler, seen = _record_request(load_fixture("match_zero_results"))
+    with make_client(handler=handler) as c:
+        c.match(Person(firstName="X"), cutoff=0.6)
+    assert seen[0].url.params.get("cutoff") == "0.6"
+
+
 def test_match_algorithm_passes_as_query_param(make_client, load_fixture) -> None:
     handler, seen = _record_request(load_fixture("match_zero_results"))
     with make_client(handler=handler) as c:

@@ -5,8 +5,10 @@ returns a coroutine. Refer to the sync client for per-method documentation —
 the only structural differences are language-level (``await``, ``async for``).
 """
 
+import asyncio
+from collections.abc import AsyncIterator, Iterable
 from types import TracebackType
-from typing import Any, Self, overload
+from typing import Any, Literal, Self, overload
 from urllib.parse import quote
 
 import httpx
@@ -14,11 +16,15 @@ import httpx
 from yente_client._http import prepare_http_kwargs, raise_for_response
 from yente_client._translation import (
     merge_filters,
-    serialise_match_filters,
     serialise_search_filters,
     unwrap_match_response,
 )
-from yente_client.client import PROGRAMS_URL, _check_matchable_schema
+from yente_client.client import (
+    PROGRAMS_URL,
+    _check_matchable_schema,
+    _match_body,
+    _prepare_match_query,
+)
 from yente_client.entities import EntityInput
 from yente_client.env import DEFAULT_BASE_URL
 from yente_client.exceptions import NotFoundError, TransportError
@@ -29,6 +35,7 @@ from yente_client.models import (
     AlgorithmsResponse,
     DatasetsResponse,
     Entity,
+    MatchError,
     MatchResponse,
     ProgramsResponse,
     SearchResponse,
@@ -307,6 +314,7 @@ class AsyncClient:
         *,
         filters: MatchFilters | None = None,
         threshold: float | None = None,
+        cutoff: float | None = None,
         algorithm: str | None = None,
         weights: dict[str, float] | None = None,
         config: dict[str, Any] | None = None,
@@ -315,23 +323,89 @@ class AsyncClient:
     ) -> MatchResponse:
         """Async equivalent of :meth:`yente_client.client.Client.match`."""
         _check_matchable_schema(entity)
-        f = merge_filters(MatchFilters, filters, filter_kwargs)
-        dataset, params = serialise_match_filters(f)
-
-        if threshold is not None:
-            params["threshold"] = threshold
-        if algorithm is not None:
-            params["algorithm"] = algorithm
-        if limit is not None:
-            params["limit"] = limit
-
-        body: dict[str, Any] = {
-            "queries": {"q": entity.to_payload()},
-            "weights": weights or {},
-            "config": config or {},
-        }
+        dataset, params = _prepare_match_query(
+            filters,
+            filter_kwargs,
+            threshold=threshold,
+            cutoff=cutoff,
+            algorithm=algorithm,
+            limit=limit,
+        )
+        body = _match_body(entity, weights, config)
 
         raw = await self._request(
             "POST", f"/match/{quote(dataset, safe='')}", params=params, json=body
         )
         return MatchResponse.model_validate(unwrap_match_response(raw))
+
+    async def match_iter(
+        self,
+        entities: Iterable[tuple[str, EntityInput]],
+        *,
+        workers: int = 4,
+        filters: MatchFilters | None = None,
+        threshold: float | None = None,
+        cutoff: float | None = None,
+        algorithm: str | None = None,
+        weights: dict[str, float] | None = None,
+        config: dict[str, Any] | None = None,
+        limit: int | None = None,
+        on_error: Literal["raise", "collect"] = "raise",
+        **filter_kwargs: Any,
+    ) -> AsyncIterator[tuple[str, MatchResponse | MatchError]]:
+        """Async equivalent of :meth:`yente_client.client.Client.match_iter`.
+
+        An async generator — iterate with ``async for``, no ``await`` on the
+        call itself.
+        """
+        if workers < 1:
+            raise ValueError(f"workers must be >= 1, got {workers}")
+        dataset, params = _prepare_match_query(
+            filters,
+            filter_kwargs,
+            threshold=threshold,
+            cutoff=cutoff,
+            algorithm=algorithm,
+            limit=limit,
+        )
+        path = f"/match/{quote(dataset, safe='')}"
+
+        async def run_one(entity: EntityInput) -> MatchResponse:
+            _check_matchable_schema(entity)
+            raw = await self._request(
+                "POST", path, params=params, json=_match_body(entity, weights, config)
+            )
+            return MatchResponse.model_validate(unwrap_match_response(raw))
+
+        pairs = iter(entities)
+        pending: dict[asyncio.Task[MatchResponse], str] = {}
+        try:
+            exhausted = False
+            while True:
+                while not exhausted and len(pending) < workers:
+                    try:
+                        key, entity = next(pairs)
+                    except StopIteration:
+                        exhausted = True
+                        break
+                    pending[asyncio.ensure_future(run_one(entity))] = key
+                if not pending:
+                    break
+                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    key = pending.pop(task)
+                    result: MatchResponse | MatchError
+                    try:
+                        result = task.result()
+                    # The "collect" contract is total: any per-item failure
+                    # (transport, API, validation) must come back in-band.
+                    except Exception as exc:
+                        if on_error == "raise":
+                            raise
+                        result = MatchError(key=key, exception=exc)
+                    yield key, result
+        finally:
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)

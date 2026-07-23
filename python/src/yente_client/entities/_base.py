@@ -15,11 +15,19 @@ PropertyValue: TypeAlias = str | list[str]
 def _ensure_list(value: Any) -> Any:
     """Coerce a property value to a list.
 
-    Single string → one-element list; list → unchanged; ``None`` → unchanged
-    so Pydantic applies the field's default. Anything else raises; ints,
-    dicts, and other types are not accepted as property values.
+    Single string → one-element list; list → unchanged; ``None`` → empty
+    list, meaning "unset": callers mapping optional source fields (a CSV
+    cell, a nullable database column) can pass them through without guards,
+    and ``to_payload()`` omits the empty list from the wire payload.
+    Anything else raises; ints, dicts, and other types are not accepted as
+    property values.
+
+    The field annotations stay ``list[str]`` — the canonical shape — on
+    purpose; this validator widens what is accepted, not what is declared.
     """
-    if value is None or isinstance(value, list):
+    if value is None:
+        return []
+    if isinstance(value, list):
         return value
     if isinstance(value, str):
         return [value]
