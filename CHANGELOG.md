@@ -8,6 +8,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-23
+
 ### Added
 
 - **`Client.match_iter()` / `AsyncClient.match_iter()`** — stream `/match`
@@ -92,6 +94,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   token is the caller's OpenSanctions API key, forwarded downstream).
   Skeleton — the schema/model surface and response shaping are covered by
   tests; the network tools are not yet exercised end-to-end.
+
+### Fixed
+
+- **`yente-cli` help epilogs render as written**: Typer's rich help collapses
+  single newlines in epilogs, which mangled every command's EXAMPLES /
+  OUTPUT / EXIT CODES block into run-on paragraphs. The blocks now print
+  verbatim, preserving indentation and alignment.
 
 ## [0.1.0] - 2026-06-07
 
