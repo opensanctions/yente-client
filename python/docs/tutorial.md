@@ -404,6 +404,8 @@ property.
 
 ## Where to go next
 
+- [Screening a file](screening.md) — batch-screen a CSV with
+  `yente-cli screen` or `match_iter`.
 - [CLI overview](cli.md) — `yente-cli`, agent automations, shell pipelines.
 - [API reference](api/index.md) — full signatures of every public symbol.
 - [OpenSanctions docs](https://www.opensanctions.org/docs/) — domain

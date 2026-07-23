@@ -10,6 +10,25 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`Client.match_iter()` / `AsyncClient.match_iter()`** — stream `/match`
+  calls over any iterable of `(key, entity)` pairs with bounded concurrency
+  (`workers`, default 4). Results yield in completion order; input is pulled
+  lazily so memory stays flat on large runs. `on_error="collect"` returns
+  per-item failures in-band as the new **`MatchError`** dataclass instead of
+  aborting the stream.
+
+- **`cutoff` parameter** on `match()` / `match_iter()` — drop candidates
+  scoring below the given value from the response entirely (server default
+  0.50), complementing `threshold`, which only sets the `match` flag.
+
+- **`yente-cli screen`** — batch-screen a CSV of entities against `/match`.
+  Maps input columns to FtM properties (`-i col=prop`, `--schema-column`),
+  runs concurrent queries (`--workers`, default 20), and writes one output
+  row per candidate with all input columns passed through and `match_`-prefixed
+  result columns (`--url`, `--explanation`, `-o prop=column` for candidate
+  properties). Failed rows surface in a `match_error` column and exit code 5
+  rather than aborting the run.
+
 - **`schemas.describe_schema()` / `schema_index()` / `schema_properties()` /
   `property_matchable()` / `describe_type()` / `type_values()`** — a shared,
   condensed FtM model projection (schemata, properties, and value types) used by
@@ -49,6 +68,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   declared MIT).
 
 ### Changed
+
+- **Entity properties accept `None` as "unset"**: `Person(name="X",
+  birthDate=None)` now validates, coerces to an empty list, and omits the
+  property from the wire payload — so optional source fields (a CSV cell, a
+  nullable database column) pass through without guards. Previously an
+  explicit `None` raised a `ValidationError`.
 
 - `yente-cli ref schemas` / `ref schema NAME` output is leaner (the projection
   above): the `abstract`/`required`/`deprecated` columns/fields are gone.

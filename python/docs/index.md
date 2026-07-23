@@ -10,6 +10,9 @@ The yente-client Python SDK, `yente-cli` command-line tool, and
 - **[Tutorial](tutorial.md)** — a linear walk through the SDK: install,
   first match, search, fetch, async, errors, and the
   [FollowTheMoney](https://followthemoney.tech/) (FtM) data model.
+- **[Screening a file](screening.md)** — batch-screen a CSV of
+  entities with `yente-cli screen` (or `match_iter` in Python):
+  column mapping, triage, error handling.
 - **[CLI overview](cli.md)** — the `yente-cli` command, when to reach
   for it, the command list, output formats, exit codes.
 - **[MCP server](mcp.md)** — expose screening to LLM agents: install,

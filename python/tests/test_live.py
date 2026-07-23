@@ -115,3 +115,54 @@ def test_cli_status_against_live_api() -> None:
     parsed = json.loads(result.stdout)
     assert parsed["api"]["liveness"]["status"] == "ok"
     assert parsed["api"]["url"] == base_url
+
+
+def test_match_iter_live(live_client) -> None:
+    """Two-entity fan-out against the real API."""
+    pairs = [
+        ("hit", Person(name="Arkadii Romanovich Rotenberg", birthDate="1951-12-15")),
+        ("miss", Person(name="Zzyzx Qwomply Nonexistent")),
+    ]
+    results = dict(live_client.match_iter(pairs, workers=2, on_error="collect"))
+    assert set(results) == {"hit", "miss"}
+    hit = results["hit"]
+    assert isinstance(hit, MatchResponse)
+    assert hit.top is not None
+    assert hit.top.score > 0.5
+
+
+def test_cli_screen_against_live_api(tmp_path) -> None:
+    """End-to-end CLI smoke: `yente-cli screen` over a tiny CSV."""
+    from yente_client.cli.main import app
+
+    key = env.api_key()
+    if not key:
+        pytest.skip("OPENSANCTIONS_API_KEY not set")
+    base_url = env.base_url()
+    src = tmp_path / "in.csv"
+    src.write_text("row_id,full_name,born\n1,Arkadii Romanovich Rotenberg,1951-12-15\n")
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "--api-key",
+            key,
+            "--base-url",
+            base_url,
+            "screen",
+            str(src),
+            "-",
+            "-s",
+            "Person",
+            "-i",
+            "full_name=name",
+            "-i",
+            "born=birthDate",
+            "--url",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("row_id,full_name,born,match_id,")
+    assert len(lines) >= 2
+    assert ",https://www.opensanctions.org/entities/" in lines[1]
