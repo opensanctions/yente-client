@@ -13,26 +13,43 @@ FastMCP-independent and testable; the header extraction lives in
 :mod:`yente_client.mcp.server`.
 """
 
+from collections import OrderedDict
+
+import httpx
+
 from yente_client.async_client import AsyncClient
 
 # One AsyncClient per (key, base_url) so we don't spin up a fresh httpx pool on
-# every tool call. Long-lived for the server's lifetime.
-# TODO: bound this (LRU) and close clients on shutdown — fine unbounded for a
-# skeleton, but a busy multi-tenant server would accumulate pools.
-_CLIENTS: dict[tuple[str | None, str], AsyncClient] = {}
+# every tool call. Bounded because access tokens expire and are replaced, so a
+# long-running multi-tenant server sees an endless stream of new keys.
+_MAX_CLIENTS = 1024
+_CLIENTS: OrderedDict[tuple[str | None, str], AsyncClient] = OrderedDict()
 
 
-def client_for(api_key: str | None, base_url: str) -> AsyncClient:
+def client_for(
+    api_key: str | None,
+    base_url: str,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> AsyncClient:
     """Return a cached :class:`AsyncClient` for this key + base URL.
 
     ``api_key`` may be ``None`` when targeting an open self-hosted yente (no
-    gateway); the key is simply unused downstream in that case.
+    gateway); the key is simply unused downstream in that case. ``transport``
+    only applies to a newly built client.
     """
     cache_key = (api_key, base_url)
     client = _CLIENTS.get(cache_key)
-    if client is None:
-        client = AsyncClient(api_key=api_key, base_url=base_url, app_name="yente-mcp")
-        _CLIENTS[cache_key] = client
+    if client is not None:
+        _CLIENTS.move_to_end(cache_key)
+        return client
+    client = AsyncClient(
+        api_key=api_key, base_url=base_url, app_name="yente-mcp", transport=transport
+    )
+    _CLIENTS[cache_key] = client
+    if len(_CLIENTS) > _MAX_CLIENTS:
+        # Not closed: a tool call may still be using it. Garbage collection
+        # releases its connections once nothing refers to it.
+        _CLIENTS.popitem(last=False)
     return client
 
 

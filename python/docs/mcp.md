@@ -40,6 +40,21 @@ gateway, and the caller screens as themselves. A request without a bearer
 token falls back to the server's `OPENSANCTIONS_API_KEY`; against an open
 self-hosted yente, no key is needed at all.
 
+## Serving from your own app
+
+To serve the MCP server from an existing ASGI app, add the app that
+`mcp.http_app()` returns and run its lifespan. `configure()` sets where the
+tools send their API calls; with an `httpx.ASGITransport` over the API's own
+app, they reach it in-process:
+
+```python
+import httpx
+from yente_client.mcp import server
+
+server.configure(base_url="http://api.internal", transport=httpx.ASGITransport(app=api_app))
+mcp_app = server.mcp.http_app(path="/mcp", stateless_http=True, json_response=True)
+```
+
 ## Connecting a client
 
 Claude Code:

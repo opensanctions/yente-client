@@ -8,10 +8,26 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`yente_client.mcp.server.configure()`** — set the API root and an httpx
+  transport for the MCP tools' API calls. An API that serves the MCP server
+  itself passes an `httpx.ASGITransport` over its own app, so tool calls reach
+  it in-process and still pass its authentication and metering.
+
+### Fixed
+
+- **MCP tools forward the caller's bearer token.** FastMCP leaves the
+  `Authorization` header out of `get_http_headers()` unless it is asked for by
+  name, so the tools always used the server's `OPENSANCTIONS_API_KEY` or no key.
+
 ### Changed
 
 - **The `mcp` extra needs `fastmcp>=4.0`** (MCP SDK 2.x). The server uses
   the SDK 2.x field names for tool annotations and icons.
+- The MCP server keeps at most 1024 API clients, one per API key and API root,
+  and drops the least recently used. Access tokens expire and are replaced, so
+  the cache grew without limit on a long-running server.
 
 ## [0.2.0] - 2026-07-23
 

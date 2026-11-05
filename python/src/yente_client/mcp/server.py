@@ -29,6 +29,7 @@ it stays testable without FastMCP.
 import time
 from typing import Any
 
+import httpx
 from mcp.types import Icon, ToolAnnotations
 from pydantic import ValidationError
 
@@ -69,6 +70,7 @@ BASE_URL = env.base_url()
 # Fallback API key for the whole server, used when a request carries no bearer
 # token — lets you run yente-mcp locally against a real API for testing.
 API_KEY = env.api_key()
+_transport: httpx.AsyncBaseTransport | None = None
 
 mcp: FastMCP = FastMCP(
     # name and instructions default to "yente" / the stock copy, but a self-hosted
@@ -87,14 +89,37 @@ mcp: FastMCP = FastMCP(
 )
 
 
+def configure(
+    *,
+    base_url: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """Set where the tools send their API calls. Call before serving requests.
+
+    An API that serves this MCP server itself passes an ``httpx.ASGITransport``
+    over its own app, so tool calls reach it in-process and still pass its
+    authentication and metering.
+
+    Args:
+        base_url: API root for the tools' calls. Defaults to ``$YENTE_BASE_URL``.
+        transport: httpx transport for the tools' calls. Defaults to the network.
+    """
+    global BASE_URL, _transport
+    if base_url is not None:
+        BASE_URL = base_url
+    _transport = transport
+
+
 def _resolve_client() -> AsyncClient:
     """Build (cached) an AsyncClient for this request.
 
     Uses the request's bearer token, falling back to the server's
     ``OPENSANCTIONS_API_KEY`` (see :func:`resolve_api_key`).
     """
-    token = resolve_api_key(get_http_headers().get("authorization"), API_KEY)
-    return client_for(token, BASE_URL)
+    # FastMCP leaves credential headers out unless they are asked for by name.
+    headers = get_http_headers(include={"authorization"})
+    token = resolve_api_key(headers.get("authorization"), API_KEY)
+    return client_for(token, BASE_URL, _transport)
 
 
 async def _dataset_titles(client: AsyncClient) -> dict[str, str]:
