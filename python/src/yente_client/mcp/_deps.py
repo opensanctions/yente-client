@@ -26,6 +26,8 @@ def _bail(missing: str) -> None:
 try:
     from fastmcp import FastMCP
     from fastmcp.exceptions import ToolError
+    from fastmcp.server.auth import RemoteAuthProvider
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
     from fastmcp.server.dependencies import get_http_headers
 except ImportError:
     _bail("fastmcp")
@@ -37,4 +39,12 @@ except ImportError:
     _bail("mcp")
 
 
-__all__ = ["FastMCP", "Icon", "ToolAnnotations", "ToolError", "get_http_headers"]
+__all__ = [
+    "FastMCP",
+    "Icon",
+    "JWTVerifier",
+    "RemoteAuthProvider",
+    "ToolAnnotations",
+    "ToolError",
+    "get_http_headers",
+]
