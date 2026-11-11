@@ -342,7 +342,6 @@ def test_page_info_marks_truncation() -> None:
     assert page_info(_total(29), 0, 5) == {
         "total": 29,
         "returned": 5,
-        "offset": 0,
         "next_offset": 5,
     }
     assert page_info(_total(29), 25, 4)["next_offset"] is None

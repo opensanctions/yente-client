@@ -196,13 +196,13 @@ def page_info(total: TotalSpec, offset: int, returned: int) -> dict[str, Any]:
     """Build the paging envelope every list carries.
 
     ``next_offset`` is ``None`` exactly when the list is complete, so a model
-    can't mistake a first page for the whole set.
+    can't mistake a first page for the whole set. The page's own offset is
+    left out: the caller passed it.
     """
     end = offset + returned
     return {
         "total": total.value,
         "returned": returned,
-        "offset": offset,
         "next_offset": end if end < total.value else None,
     }
 
