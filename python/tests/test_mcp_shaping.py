@@ -627,3 +627,19 @@ def test_unknown_name_falls_back_to_fuzzy_matches() -> None:
     message = unknown_name("program", "US-RUSHARM", {"US-RUSHAR": None, "EU-UKR": "Ukraine"})
     assert message == "Unknown program 'US-RUSHARM'. Closest: US-RUSHAR."
     assert unknown_name("program", "zzz", {"EU-UKR": "Ukraine"}).endswith("nothing close to it.")
+
+
+def test_brief_lists_names_as_not_shown() -> None:
+    aliased = Entity(
+        id="P1",
+        caption="Jane Doe",
+        schema="Person",
+        properties={"name": ["Jane Doe", "J. Doe"], "birthDate": ["1970"]},
+    )
+    brief = shape(aliased, "brief")
+    assert brief["properties"] == {"birthDate": ["1970"]}
+    assert brief["not_shown"] == ["name"]
+    # a stub keeps the aliases; a name that only repeats the caption is no news
+    assert shape(aliased, "stub")["properties"]["name"] == ["Jane Doe", "J. Doe"]
+    plain = Entity(id="P2", caption="Jo", schema="Person", properties={"name": ["Jo"]})
+    assert "not_shown" not in shape(plain, "brief")

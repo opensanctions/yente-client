@@ -141,3 +141,27 @@ async def test_search_results_are_abridged(
     assert first["abridged"] is True
     assert first["not_shown"] == ["firstName", "lastName"]
     assert "firstName" not in first.get("properties", {})
+
+
+async def test_search_and_relation_pages_default_to_ten(
+    monkeypatch: pytest.MonkeyPatch,
+    make_async_client: Callable[..., AsyncClient],
+    load_fixture: Callable[[str], dict[str, Any]],
+) -> None:
+    limits: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/catalog":
+            return httpx.Response(200, json=load_fixture("catalog"))
+        limits[path.split("/")[1]] = request.url.params.get("limit")
+        if path.startswith("/search/"):
+            return httpx.Response(200, json=load_fixture("search_basic"))
+        page = {"results": [], "total": {"value": 0, "relation": "eq"}, "limit": 10, "offset": 0}
+        return httpx.Response(200, json=page)
+
+    client = make_async_client(handler=handler)
+    monkeypatch.setattr(server, "_resolve_client", lambda: client)
+    await _call("search_entities", {"q": "Zacharov"})
+    await _call("fetch_entity_relations", {"entity_id": "Q1", "prop": "familyPerson"})
+    assert limits == {"search": "10", "entities": "10"}

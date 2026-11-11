@@ -111,7 +111,7 @@ def shape(
     if topics:
         shaped["topics"] = topics
     if level in ("stub", "brief"):
-        props = _stub_properties(entity)
+        props = _stub_properties(entity, names=level == "stub")
         if props:
             shaped["properties"] = props
     if level != "stub" and entity.datasets:
@@ -395,15 +395,16 @@ def _properties(entity: Entity, source_id: str | None, nested: Level) -> dict[st
     return out
 
 
-def _stub_properties(entity: Entity) -> dict[str, list[str]]:
+def _stub_properties(entity: Entity, *, names: bool = True) -> dict[str, list[str]]:
     """Pick the entity's featured, non-entity properties as plain strings.
 
-    A ``name`` that only repeats the caption is left out.
+    A ``name`` that only repeats the caption is left out, and so is every
+    ``name`` without ``names``.
     """
     out: dict[str, list[str]] = {}
     for name in _featured_names(entity.schema_):
         values = entity.get(name)
-        if name == "name" and values == [entity.caption]:
+        if name == "name" and (not names or values == [entity.caption]):
             continue
         if values:
             out[name] = values
@@ -411,17 +412,22 @@ def _stub_properties(entity: Entity) -> dict[str, list[str]]:
 
 
 def _not_shown(entity: Entity) -> list[str]:
-    """Name the summary properties a stub leaves out, without their values.
+    """Name the summary properties a brief leaves out, without their values.
 
     Tells the model which facts the full record holds (a passport number, an
     address), so it knows when a ``fetch_entity_by_id`` call would add something.
+    A brief shows no ``name`` — alias lists dominate its size, and the caption
+    carries the main one — so ``name`` is listed here when it adds more.
     """
     summary = _summary_names(entity.schema_)
-    featured = set(_featured_names(entity.schema_))
+    shown = set(_featured_names(entity.schema_)) - {"name"}
     return sorted(
         name
         for name, values in entity.properties.items()
-        if values and name in summary and name not in featured
+        if values
+        and name in summary
+        and name not in shown
+        and not (name == "name" and values == [entity.caption])
     )
 
 

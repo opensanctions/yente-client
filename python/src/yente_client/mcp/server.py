@@ -80,9 +80,11 @@ _READ_ONLY = ToolAnnotations(
 )
 
 # Page sizes. A profile shows a few edges per relationship type so hub entities
-# stay readable; the relations overview a few more; paging one type, a full page.
+# stay readable; the relations overview a few more; paging search results or one
+# relation type, a default page. Profile sections read a full page at once.
 _PROFILE_EDGES = 3
 _OVERVIEW_EDGES = 5
+_DEFAULT_PAGE = 10
 _PAGE_EDGES = 50
 # Ceiling on any caller-chosen `limit`: a page of 100 ownership edges (~105k
 # characters) overflows MCP clients' tool-output caps, while paging is free.
@@ -381,7 +383,7 @@ async def search_entities(
     schema: str | None = None,
     countries: list[str] | None = None,
     topics: list[str] | None = None,
-    limit: int | None = None,
+    limit: int = _DEFAULT_PAGE,
     offset: int = 0,
     fuzzy: bool = False,
     simple: bool = False,
@@ -398,7 +400,7 @@ async def search_entities(
     `id` returns it.
 
     Args:
-        limit: Results per page, at most 25.
+        limit: Results per page (default 10), at most 25.
         fuzzy: Tolerate spelling variation in `q`.
         simple: Read `q` as plain words, as typed into a search box, rather
             than query syntax (AND / OR, quotes, field:value).
@@ -557,7 +559,7 @@ async def fetch_entity_relations(
     (role, share, dates); the entity at its far end is abridged — identifying
     properties, datasets and `not_shown` — call fetch_entity_by_id on its `id`
     for its record. Page with
-    `limit` (default and maximum 25) / `offset` until `next_offset` is null;
+    `limit` (default 10, at most 25) / `offset` until `next_offset` is null;
     `total` counts every edge, read or not. With no `prop`, returns every
     type with its total and first few edges.
     """
@@ -578,7 +580,7 @@ async def fetch_entity_relations(
             codes.add_properties(overview.entity.schema_, out)
         else:
             block = await client.adjacent(
-                entity_id, prop=prop, limit=_cap(limit) or _MAX_LIMIT, offset=offset
+                entity_id, prop=prop, limit=_cap(limit) or _DEFAULT_PAGE, offset=offset
             )
             out = shaping.shape_relation_page(block, entity_id, prop)
             codes = legend.collect_codes(out)

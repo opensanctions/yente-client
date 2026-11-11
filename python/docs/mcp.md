@@ -107,12 +107,15 @@ Every response follows the same shape:
   echoes the dataset and topics that were screened, and `as_of`, when the
   data was last updated.
 - **Lists** carry `total`, `returned` and `next_offset`. A `next_offset` of
-  `null` means the list is complete.
+  `null` means the list is complete. Search results and one relation type
+  page 10 at a time by default, at most 25.
 - **Entities to look up next are abridged.** Match candidates, search
   results and the entity at the far end of a relationship carry their
   identifying properties (such as birth date, nationality, jurisdiction or
   IMO number), their datasets and `not_shown`, the properties their full
-  record adds, marked `abridged: true`. Profiling that `id` gives the record.
+  record adds, marked `abridged: true`. Names beyond the caption, such as
+  aliases and transliterations, are listed under `not_shown` rather than
+  repeated. Profiling that `id` gives the record.
 - **Relationship edges keep their own details** (role, share, relationship,
   dates). A position's post is part of the position held, so it keeps
   key properties such as its country. Only top-level records carry
