@@ -16,8 +16,10 @@ Outputs (regenerated; commit after running without --check):
 
 The script uses stdlib `urllib` to fetch, Jinja2 for templating, and
 shells out to `ruff format` as a final pass so the output matches the
-repo's formatting. Determinism: schemas, properties, type values are
-all sorted alphabetically; JSON is written with sort_keys=True.
+repo's formatting. ruff runs through `prek exec`, so the generated code and
+the `ruff-format` hook always use the same pinned ruff. Determinism:
+schemas, properties, type values are all sorted alphabetically; JSON is
+written with sort_keys=True.
 """
 
 from __future__ import annotations
@@ -64,7 +66,7 @@ GENERATED_FILE = REPO_ROOT / "python" / "src" / "yente_client" / "entities" / "_
 INIT_FILE = REPO_ROOT / "python" / "src" / "yente_client" / "entities" / "__init__.py"
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
-RUFF_BIN = REPO_ROOT / "python" / ".venv" / "bin" / "ruff"
+PREK_BIN = REPO_ROOT / "python" / ".venv" / "bin" / "prek"
 
 
 def fetch_model(url: str) -> dict[str, Any]:
@@ -179,15 +181,15 @@ def render_artefacts(model_json: dict[str, Any]) -> dict[Path, str]:
     return renderings
 
 
-def _find_ruff() -> str:
-    """Locate the ``ruff`` binary: prefer the project venv (local dev), fall
+def _find_prek() -> str:
+    """Locate the ``prek`` binary: prefer the project venv (local dev), fall
     back to whatever is on ``PATH`` (CI, where there's no per-project venv)."""
-    if RUFF_BIN.exists():
-        return str(RUFF_BIN)
-    found = shutil.which("ruff")
+    if PREK_BIN.exists():
+        return str(PREK_BIN)
+    found = shutil.which("prek")
     if found is None:
         raise RuntimeError(
-            "ruff not found. Install with `pip install ruff` or run `make setup`."
+            "prek not found. Install with `pip install prek` or run `make setup`."
         )
     return found
 
@@ -199,7 +201,8 @@ def ruff_format(text: str, path: Path) -> str:
     and applies the right line-length and target-version for the file.
     """
     result = subprocess.run(
-        [_find_ruff(), "format", "--stdin-filename", str(path), "-"],
+        [_find_prek(), "exec", "ruff-format", "--", "ruff", "format", "--stdin-filename", str(path), "-"],
+        cwd=REPO_ROOT,
         input=text,
         text=True,
         capture_output=True,

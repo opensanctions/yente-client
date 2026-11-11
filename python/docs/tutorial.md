@@ -83,9 +83,9 @@ section 6).
 `match()` returns a flat `MatchResponse`:
 
 ```python
-print(response.total.value)        # candidate count
-print(response.top)                # highest-scoring result, or None
-for hit in response.matches:        # results that crossed the threshold
+print(response.total.value)  # candidate count
+print(response.top)  # highest-scoring result, or None
+for hit in response.matches:  # results that crossed the threshold
     print(hit.score, hit.caption, hit.datasets)
 ```
 
@@ -247,16 +247,20 @@ lets one event loop juggle hundreds of in-flight requests.
 import asyncio
 from yente_client import AsyncClient, Person
 
+
 async def screen_all(queries: list[Person]) -> list:
     async with AsyncClient() as client:
-        return await asyncio.gather(
-            *(client.match(q, datasets=["sanctions"]) for q in queries)
-        )
+        return await asyncio.gather(*(client.match(q, datasets=["sanctions"]) for q in queries))
 
-responses = asyncio.run(screen_all([
-    Person(firstName="Alex", lastName="Smith"),
-    Person(firstName="Maria", lastName="Garcia"),
-]))
+
+responses = asyncio.run(
+    screen_all(
+        [
+            Person(firstName="Alex", lastName="Smith"),
+            Person(firstName="Maria", lastName="Garcia"),
+        ]
+    )
+)
 ```
 
 `async with` handles cleanup; `await client.aclose()` is the manual form.
@@ -311,9 +315,9 @@ the wire format exactly (camelCase).
 ```python
 from yente_client.schemas import has_schema, iter_properties, matchable_schemata
 
-has_schema("Person")             # True
+has_schema("Person")  # True
 list(iter_properties("Person"))  # ['abbreviation', 'address', …, 'weight']
-matchable_schemata()             # ['Address', 'Airplane', 'Company', …]
+matchable_schemata()  # ['Address', 'Airplane', 'Company', …]
 ```
 
 The same data is available via the CLI:

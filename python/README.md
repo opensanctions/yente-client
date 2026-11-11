@@ -53,10 +53,10 @@ for sanction in entity.properties.get("sanctions", []):
     print(sanction.properties["authority"])
 
 # Operational endpoints
-c.datasets()      # available datasets and freshness
-c.programs()      # sanctions-program catalog (resolves programId codes)
-c.algorithms()    # enabled matching algorithms
-c.healthz()       # liveness
+c.datasets()  # available datasets and freshness
+c.programs()  # sanctions-program catalog (resolves programId codes)
+c.algorithms()  # enabled matching algorithms
+c.healthz()  # liveness
 ```
 
 ## Entity construction
@@ -72,8 +72,8 @@ from yente_client import Person, Company
 p = Person(firstName="Aleksandr", lastName="Zacharov", country="ru")
 c = Company(name="Acme LLC", jurisdiction="us")
 
-Person(birth_date="1965")    # ValidationError — snake_case isn't aliased
-Person(notARealProp="X")     # ValidationError — extra="forbid"
+Person(birth_date="1965")  # ValidationError — snake_case isn't aliased
+Person(notARealProp="X")  # ValidationError — extra="forbid"
 ```
 
 ## Configuration
