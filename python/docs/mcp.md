@@ -70,7 +70,7 @@ Vocabulary and metadata lookups:
 | Tool | Purpose |
 | --- | --- |
 | `describe_schema` | FtM schemata and their properties (offline, bundled model). |
-| `describe_topics` | The risk-topic vocabulary (offline). |
+| `describe_topics` | What topic tags mean and how they filter, plus every code with its label (offline). |
 | `describe_countries` | The country vocabulary (offline). |
 | `describe_dataset` | One dataset's metadata from the live catalog, by name. |
 | `describe_program` | One sanctions program's metadata, by its `programId` key. |

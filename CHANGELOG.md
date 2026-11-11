@@ -43,6 +43,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MCP `describe_dataset` and `describe_program` require a name or key.**
   The no-argument catalog indexes are gone: they were too large for an
   agent's context. An unknown name returns the closest matching entries.
+- **MCP page sizes are capped at 25.** A larger `limit` on `match_entity`,
+  `search_entities`, `fetch_entity_relations` or `fetch_entity_statements`
+  is clamped, since big pages overflow MCP clients' tool-output limits.
+- **MCP `describe_topics` returns `{about, topics}`**: a short explanation of
+  the topic families and how the `topics` filter matches, next to the
+  code → label map.
 - **Rewritten MCP server instructions and tool descriptions.** The
   instructions now explain the data model and the rules shared by every
   tool; `search_entities` is described as keyword browsing, never a way to

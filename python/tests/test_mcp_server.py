@@ -49,6 +49,31 @@ async def test_empty_screen_reports_as_of_without_a_legend(
     assert out["checked"]["as_of"].startswith(updated["updated_at"][:10])
 
 
+async def test_page_size_is_capped(
+    monkeypatch: pytest.MonkeyPatch,
+    make_async_client: Callable[..., AsyncClient],
+    load_fixture: Callable[[str], dict[str, Any]],
+) -> None:
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/catalog":
+            return httpx.Response(200, json=load_fixture("catalog"))
+        seen.append(request.url.params.get("limit"))
+        return httpx.Response(200, json=load_fixture("statements"))
+
+    client = make_async_client(handler=handler)
+    monkeypatch.setattr(server, "_resolve_client", lambda: client)
+    await _call("fetch_entity_statements", {"entity_id": "Q7747", "limit": 500})
+    assert seen == ["25"]
+
+
+async def test_describe_topics_explains_the_codes() -> None:
+    out = await _call("describe_topics", {})
+    assert "sanction.linked" in out["about"]
+    assert out["topics"]["role.pep"]
+
+
 async def test_unknown_dataset_suggests_close_names(use_api: None) -> None:
     with pytest.raises(ToolError, match="Unknown dataset 'ofac'. Closest: "):
         await server.mcp.call_tool("describe_dataset", {"name": "ofac"})

@@ -67,6 +67,9 @@ _READ_ONLY = ToolAnnotations(readOnlyHint=True)
 _PROFILE_EDGES = 3
 _OVERVIEW_EDGES = 5
 _PAGE_EDGES = 50
+# Ceiling on any caller-chosen `limit`: a page of 100 ownership edges (~105k
+# characters) overflows MCP clients' tool-output caps, while paging is free.
+_MAX_LIMIT = 25
 # Character budget for one page of fetch_entity_descriptions, and how many
 # statements to read per prose property (Gazprom, a heavy case, has ~65 notes).
 _TEXT_PAGE_CHARS = 15_000
@@ -238,6 +241,11 @@ async def _with_legend(
     return out
 
 
+def _cap(limit: int | None) -> int | None:
+    """Clamp a caller's page size to :data:`_MAX_LIMIT`; ``None`` keeps the default."""
+    return None if limit is None else max(1, min(limit, _MAX_LIMIT))
+
+
 def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
     """Construct a typed input entity from a schema name + property bag."""
     schema_cls = getattr(entities, schema, None)
@@ -271,10 +279,13 @@ async def match_entity(
     and `properties` maps property names to value lists, e.g. {"name": ["Jane
     Doe"], "birthDate": ["1975"], "nationality": ["Russia"]}. Send every
     property you have — identifiers (imoNumber, registrationNumber) and dates
-    settle what names alone can't. Screen each party in its own call. For a
-    sanctions-only screen pass topics=["sanction", "sanction.linked",
-    "sanction.control"]; leave `topics` unset to also find PEPs and risk
-    listings.
+    settle what names alone can't. Screen each party in its own call.
+
+    `topics` sets what kind of listing to screen for. A candidate qualifies if
+    it carries any of the given codes, matched exactly: for sanctions pass
+    ["sanction", "sanction.linked", "sanction.control"], for politically
+    exposed persons ["role.pep", "role.rca"]. Unset, the screen covers every
+    listing. describe_topics lists every code.
 
     Each candidate has a `score` (0-1), `match` (score at or above the
     threshold) and an `explanation`: the scoring features with the query and
@@ -288,6 +299,7 @@ async def match_entity(
         dataset: Collection to screen against; "default" covers all sources.
         threshold: Score at which `match` turns true; leave to the server.
         cutoff: Score below which candidates are dropped; leave to the server.
+        limit: Candidates to return, at most 25.
     """
     entity = _build_entity(schema, properties)
     client = _resolve_client()
@@ -296,7 +308,7 @@ async def match_entity(
             entity,
             threshold=threshold,
             cutoff=cutoff,
-            limit=limit,
+            limit=_cap(limit),
             datasets=[dataset],
             topics=topics,
         )
@@ -357,6 +369,7 @@ async def search_entities(
     anything. Use match_entity for that, even with just a name.
 
     Args:
+        limit: Results per page, at most 25.
         fuzzy: Tolerate spelling variation in `q`.
         simple: Read `q` as plain words, as typed into a search box, rather
             than query syntax (AND / OR, quotes, field:value).
@@ -371,7 +384,7 @@ async def search_entities(
         kwargs["topics"] = topics
     try:
         resp = await client.search(
-            q, limit=limit, offset=offset, fuzzy=fuzzy, simple=simple, **kwargs
+            q, limit=_cap(limit), offset=offset, fuzzy=fuzzy, simple=simple, **kwargs
         )
     except YenteError as exc:
         raise ToolError(describe_error(exc)) from exc
@@ -509,9 +522,9 @@ async def fetch_entity_relations(
     `positionOccupancies`. For a company, "ownershipOwner" lists what it owns
     and "ownershipAsset" who owns it. Each edge carries its own properties
     (role, share, dates) and the counterparty with its topics. Page with
-    `limit` (default 50) / `offset` until `next_offset` is null; when you stop
-    early, say how many exist. With no `prop`, returns every type with its
-    total and first few edges.
+    `limit` (default and maximum 25) / `offset` until `next_offset` is null;
+    when you stop early, say how many exist. With no `prop`, returns every
+    type with its total and first few edges.
     """
     if prop in shaping.HIDDEN_RELATION_PROPS:
         raise ToolError(
@@ -523,14 +536,14 @@ async def fetch_entity_relations(
     try:
         if prop is None:
             overview = await client.adjacent(
-                entity_id, limit=limit or _OVERVIEW_EDGES, offset=offset
+                entity_id, limit=_cap(limit) or _OVERVIEW_EDGES, offset=offset
             )
             out = shaping.shape_adjacency(overview)
             codes = shaping.collect_codes(out)
             codes.add_properties(overview.entity.schema_, out)
         else:
             block = await client.adjacent(
-                entity_id, prop=prop, limit=limit or _PAGE_EDGES, offset=offset
+                entity_id, prop=prop, limit=_cap(limit) or _MAX_LIMIT, offset=offset
             )
             out = shaping.shape_relation_page(block, entity_id)
             codes = shaping.collect_codes(out)
@@ -547,7 +560,7 @@ async def fetch_entity_statements(
     prop: str | None = None,
     dataset: str | None = None,
     sort: list[str] | None = None,
-    limit: int = 50,
+    limit: int = _MAX_LIMIT,
     offset: int = 0,
 ) -> dict[str, Any]:
     """Trace which source asserted each value of an entity, and when.
@@ -560,6 +573,9 @@ async def fetch_entity_statements(
     them too. Narrow with `prop` (e.g. "alias") or `dataset`. Each row's
     `entity_id` is the source record that was merged into the entity. Hosted
     OpenSanctions API only; a self-hosted yente errors here.
+
+    Args:
+        limit: Statements per page, at most 25.
     """
     client = _resolve_client()
     try:
@@ -568,7 +584,7 @@ async def fetch_entity_statements(
             prop=prop,
             dataset=dataset,
             sort=sort,
-            limit=limit,
+            limit=_cap(limit),
             offset=offset,
         )
     except YenteError as exc:
@@ -593,15 +609,30 @@ def describe_schema(schema: str | None = None) -> dict[str, Any]:
         raise ToolError(str(exc)) from exc
 
 
+_TOPICS_ABOUT = (
+    "Topics are tags on an entity saying why it is in the data or what kind of "
+    "entity it is. Codes form dotted families: `sanction*` (listed, or owned, "
+    "controlled or otherwise linked to a listed entity), `role.pep*` and "
+    "`role.rca` (politically exposed persons and their close associates), "
+    "`crime.*`, `debarment`, `wanted`, `reg.*` (offences and official action), "
+    "`export.*` and `mare.*` (trade and shipping restrictions), and descriptive "
+    "families such as `gov.*`, `fin.*` and `corp.*`. A tag is not an "
+    "accusation: being a PEP calls for closer scrutiny, not suspicion. As a "
+    "filter, a topic matches its exact code only — `sanction` "
+    "does not include `sanction.linked` — and an entity qualifies if it "
+    "carries any of the codes given."
+)
+
+
 @mcp.tool(title="Describe topic tags", annotations=_READ_ONLY)
-def describe_topics() -> dict[str, str]:
-    """List every risk topic (code → label).
+def describe_topics() -> dict[str, Any]:
+    """Explain the topic tags and list every code with its label.
 
     Use to pick values for the `topics` filter of match_entity or
-    search_entities (`sanction`, `role.pep`, …). Topics in results already
-    carry their labels.
+    search_entities, or to understand what a family of topics covers. Topics
+    in results already carry their labels.
     """
-    return introspect.topic_values()
+    return {"about": _TOPICS_ABOUT, "topics": introspect.topic_values()}
 
 
 @mcp.tool(title="Describe country codes", annotations=_READ_ONLY)

@@ -21,8 +21,9 @@ These are nudges, not pass/fail criteria.
   dataset and, where available, a source URL, in a form that survives being
   pasted into a spreadsheet row or an escalation packet.
 - **Hits are evidence, not verdicts.** Present matches as input to a human
-  reviewer's decision: recommend escalation, but don't clear or reject a
-  customer.
+  reviewer's decision: lay out what agrees, what conflicts and what would
+  settle it, but don't clear, reject or escalate a customer, or recommend
+  doing so.
 
 ## How KYC agents use a screening MCP
 
@@ -266,19 +267,21 @@ to the sanction topics.
 **Prompt:** Onboard Blue Harbour Trading GmbH (Germany). Director: Jane
 Miller. Beneficial owner: Arkady Rotenberg, 30%.
 
-**Expected query:** a separate matching query for each party (the company,
-the director and the beneficial owner), restricted to the sanction topics.
+**Expected query:** a separate, unrestricted matching query for each party
+(the company, the director and the beneficial owner).
 
 **Acceptance criteria:**
 
 - Screens all three parties and reports a result for each.
-- The company and the director come back clean; the beneficial owner is a
-  confirmed sanctions hit.
-- Recommends escalation for review because of the owner's hit. It doesn't
-  approve or decline the onboarding itself.
+- The owner is a sanctions hit; the company has no candidates; the director
+  only has name-only candidates, so the answer asks for her birth date or
+  nationality rather than clearing or flagging her.
+- Doesn't approve, decline or escalate the onboarding, or recommend any of
+  these.
 
-> Observed 2026-11-04: the company and director (both fictional) return no
-> candidates.
+> Observed 2026-11-11: the company (fictional) returns no candidates. Jane
+> Miller returns name-only candidates, among them a UK diplomat (PEP) and
+> US healthcare debarments.
 
 ### 15. Ongoing monitoring: what changed
 
@@ -322,10 +325,7 @@ PEP. Check his declaration.
 
 ### 17. Risk listing without a sanction
 
-**Prompt:** Screen <person>.
-
-Fill in someone listed on `_wikidata/oligarchs` who has a Risk record and no
-Sanction. The runner skips prompts that still contain a `<placeholder>`.
+**Prompt:** Screen Filaret Galchev.
 
 **Expected query:** a matching query with no topic restriction (a
 sanctions-only screen would never return this person), then a profile of
@@ -334,5 +334,9 @@ the candidate.
 **Acceptance criteria:**
 
 - Says the person is not sanctioned.
-- Reports the risk listing as a finding for review, with its source and
-  reason.
+- Reports the risk listing as a finding, not a sanction, with its source and
+  program (the CAATSA Section 241 oligarch report).
+
+> Observed 2026-11-11: Filaret Galchev (`Q4132909`) carries the Oligarch
+> topic and one Risk record from `wd_oligarchs` (program `US-CAATSA-241`,
+> authority OpenSanctions, no reason text), and no Sanction.
