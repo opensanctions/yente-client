@@ -10,8 +10,6 @@ streamable-HTTP service (``yente-mcp``). Install the extra:
 
 Module map:
 
-- :mod:`yente_client.mcp.introspect` — FtM model lookups (no network); backs
-  the ``describe`` tool and the ``ftm://`` resources.
 - :mod:`yente_client.mcp.shaping` — trims response entities to the compact,
   decision-relevant views the tools return.
 - :mod:`yente_client.mcp.auth` — per-request API-key → ``AsyncClient`` plumbing.

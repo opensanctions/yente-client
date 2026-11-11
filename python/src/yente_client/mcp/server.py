@@ -25,24 +25,27 @@ SDK or CLI to experiment. Each request carries the
 caller's API key as a bearer token, forwarded downstream (see
 :mod:`yente_client.mcp.auth`).
 
-Keep this module thin: the real logic lives in :mod:`~yente_client.mcp.introspect`
-and :mod:`~yente_client.mcp.shaping`. Anything beyond plumbing belongs there so
+Keep this module thin: the real logic lives in :mod:`yente_client.schemas` and
+:mod:`~yente_client.mcp.shaping`. Anything beyond plumbing belongs there so
 it stays testable without FastMCP.
 """
 
 import asyncio
+import contextlib
+import functools
 import time
-from typing import Any, Literal, NamedTuple
+from collections.abc import Awaitable, Callable, Iterator
+from typing import Any, Generic, Literal, TypeVar
 
 from mcp.types import CallToolRequestParams, Icon, ToolAnnotations
 from pydantic import ValidationError
 
-from yente_client import __version__, env
+from yente_client import __version__, env, schemas
 from yente_client._http import is_opensanctions_url
 from yente_client.async_client import AsyncClient
 from yente_client.entities import EntityInput, entity_class
 from yente_client.exceptions import YenteError
-from yente_client.mcp import introspect, shaping
+from yente_client.mcp import shaping
 from yente_client.mcp._deps import (
     CallNext,
     FastMCP,
@@ -56,11 +59,15 @@ from yente_client.mcp.auth import client_for, resolve_api_key
 from yente_client.mcp.errors import describe_error
 from yente_client.models import (
     AdjacentPropertyResponse,
+    AlgorithmsResponse,
+    DatasetsResponse,
     Entity,
-    Program,
+    ProgramsResponse,
     Statement,
     StatementsResponse,
 )
+
+T = TypeVar("T")
 
 # OpenSanctions brand mark, served as square PNGs from the public asset CDN.
 _ICON_BASE = "https://assets.opensanctions.org/images/nura"
@@ -100,16 +107,50 @@ _NEAR_MISS_LIMIT = 3
 # catalog is a small response (see opensanctions/yente#1202 for giving it an
 # ETag too).
 _GLOSSARY_TTL_SECONDS = 900.0
-_program_catalog_cache: tuple[float, list[Program]] | None = None
-_features_cache: tuple[float, dict[str, str]] | None = None
 
 
-class _CatalogInfo(NamedTuple):
-    datasets: dict[str, dict[str, Any]]
-    freshness: dict[str, Any] | None
+class _TTLCache(Generic[T]):
+    """Hold one value fetched from yente, refetched once older than ``ttl`` seconds.
+
+    A failed refetch serves the stale value when one is held.
+    """
+
+    def __init__(self, ttl: float) -> None:
+        self.ttl = ttl
+        self.clear()
+
+    def clear(self) -> None:
+        self._value: T | None = None
+        self._fetched_at = 0.0
+
+    async def get(self, fetch: Callable[[], Awaitable[T]]) -> T:
+        """Return the held value, refetching it when stale.
+
+        Raises ``YenteError`` only when the fetch fails and nothing is held.
+        """
+        now = time.monotonic()
+        if self._value is not None and now - self._fetched_at < self.ttl:
+            return self._value
+        try:
+            self._value = await fetch()
+        except YenteError:
+            if self._value is None:
+                raise
+            return self._value
+        self._fetched_at = now
+        return self._value
 
 
-_catalog_info_cache: tuple[float, _CatalogInfo] | None = None
+# Process-wide, not per client: the catalogs are the same for every caller.
+_catalog: _TTLCache[DatasetsResponse] = _TTLCache(_GLOSSARY_TTL_SECONDS)
+_programs: _TTLCache[ProgramsResponse] = _TTLCache(_GLOSSARY_TTL_SECONDS)
+_algorithms: _TTLCache[AlgorithmsResponse] = _TTLCache(_GLOSSARY_TTL_SECONDS)
+
+
+def _reset_caches() -> None:
+    for cache in (_catalog, _programs, _algorithms):
+        cache.clear()
+
 
 BASE_URL = env.base_url()
 # Fallback API key for the whole server, used when a request carries no bearer
@@ -175,73 +216,25 @@ def _resolve_client() -> AsyncClient:
     return client_for(token, BASE_URL)
 
 
-async def _catalog_info(client: AsyncClient) -> _CatalogInfo:
-    """Dataset records and freshness from the live catalog; cached, failure-soft.
+async def _soft(cache: _TTLCache[T], fetch: Callable[[], Awaitable[T]]) -> T | None:
+    """Read a cached lookup that only enriches a response: a failure yields ``None``."""
+    try:
+        return await cache.get(fetch)
+    except YenteError:
+        return None
 
-    On a fetch error returns the stale cache if there is one, else an empty
-    record — a missing legend must never fail a screening call.
+
+@contextlib.contextmanager
+def _tool_errors() -> Iterator[None]:
+    """Turn an SDK error into a tool error saying what failed and whether to retry.
+
+    A context manager rather than middleware: FastMCP wraps a tool's exception
+    in its own ``ToolError`` before middleware sees it.
     """
-    global _catalog_info_cache
-    now = time.monotonic()
-    if _catalog_info_cache is not None:
-        fetched_at, info = _catalog_info_cache
-        if now - fetched_at < _GLOSSARY_TTL_SECONDS:
-            return info
     try:
-        resp = await client.datasets()
-    except YenteError:
-        return _catalog_info_cache[1] if _catalog_info_cache is not None else _CatalogInfo({}, None)
-    info = _CatalogInfo(shaping.dataset_records(resp), shaping.freshness(resp))
-    _catalog_info_cache = (now, info)
-    return info
-
-
-def _unofficial(info: _CatalogInfo) -> set[str]:
-    """Names of datasets whose publisher isn't official (aggregators, NGOs, Wikidata)."""
-    return {name for name, rec in info.datasets.items() if rec.get("official") is False}
-
-
-async def _program_catalog(client: AsyncClient) -> list[Program]:
-    """The sanctions-program catalog, cached process-wide (it's a global artifact).
-
-    Raises ``YenteError`` on a failed fetch — describe wants the error;
-    the legend path wraps this in :func:`_program_records` instead.
-    """
-    global _program_catalog_cache
-    now = time.monotonic()
-    if _program_catalog_cache is not None:
-        fetched_at, catalog = _program_catalog_cache
-        if now - fetched_at < _GLOSSARY_TTL_SECONDS:
-            return catalog
-    resp = await client.programs()
-    _program_catalog_cache = (now, resp.data)
-    return resp.data
-
-
-async def _program_records(client: AsyncClient) -> dict[str, dict[str, Any]]:
-    """Program key → legend record; the failure-soft face of :func:`_program_catalog`."""
-    try:
-        catalog = await _program_catalog(client)
-    except YenteError:
-        return {}
-    return shaping.program_records(catalog)
-
-
-async def _feature_descriptions(client: AsyncClient) -> dict[str, str]:
-    """Scoring feature name → description for the default algorithm; cached, failure-soft."""
-    global _features_cache
-    now = time.monotonic()
-    if _features_cache is not None:
-        fetched_at, features = _features_cache
-        if now - fetched_at < _GLOSSARY_TTL_SECONDS:
-            return features
-    try:
-        resp = await client.algorithms()
-    except YenteError:
-        return _features_cache[1] if _features_cache is not None else {}
-    features = shaping.feature_descriptions(resp)
-    _features_cache = (now, features)
-    return features
+        yield
+    except YenteError as exc:
+        raise ToolError(describe_error(exc)) from exc
 
 
 async def _with_legend(
@@ -257,14 +250,17 @@ async def _with_legend(
     """
     if codes is None:
         codes = shaping.collect_codes(out)
-    info = await _catalog_info(client)
-    programs = await _program_records(client) if codes.programs else {}
-    features = await _feature_descriptions(client) if codes.features else {}
+    catalog = await _soft(_catalog, client.datasets)
+    programs = algorithms = None
+    if codes.programs:
+        programs = await _soft(_programs, client.programs)
+    if codes.features:
+        algorithms = await _soft(_algorithms, client.algorithms)
     legend = shaping.build_legend(
         codes,
-        datasets=info.datasets,
-        programs=programs,
-        features=features,
+        datasets=shaping.dataset_records(catalog) if catalog else {},
+        programs=shaping.program_records(programs.data) if programs else {},
+        features=shaping.feature_descriptions(algorithms) if algorithms else {},
         links=_LINKS,
     )
     if legend.keys() - {"links"}:
@@ -282,13 +278,20 @@ def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
     try:
         schema_cls = entity_class(schema)
     except KeyError:
-        raise ToolError(
-            f'Unknown FtM schema {schema!r}. Call describe(kind="schema") for the list.'
-        ) from None
+        raise _unknown_schema(schema) from None
     try:
         return schema_cls.model_validate(properties)
     except ValidationError as exc:
         raise ToolError(f"Invalid properties for schema {schema!r}: {exc}") from exc
+
+
+def _unknown_schema(name: str) -> ToolError:
+    """Report an unknown schema name with the closest real ones."""
+    titles = {
+        schema: label if (label := schemas.schema_spec(schema).label) != schema else None
+        for schema in schemas.model["schemata"]
+    }
+    return ToolError(shaping.unknown_name("schema", name, titles))
 
 
 # ----- tools -----
@@ -338,28 +341,16 @@ async def match_entity(
     """
     entity = _build_entity(schema, properties)
     client = _resolve_client()
-    try:
-        resp = await client.match(
-            entity,
-            threshold=threshold,
-            cutoff=cutoff,
-            limit=_cap(limit),
-            datasets=[dataset],
-            topics=topics,
-        )
+    screen = functools.partial(
+        client.match, entity, threshold=threshold, datasets=[dataset], topics=topics
+    )
+    with _tool_errors():
+        resp = await screen(cutoff=cutoff, limit=_cap(limit))
         near_misses = None
         if not resp.results and cutoff is None:
-            near_misses = await client.match(
-                entity,
-                threshold=threshold,
-                cutoff=0.0,
-                limit=_NEAR_MISS_LIMIT,
-                datasets=[dataset],
-                topics=topics,
-            )
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
-    freshness = (await _catalog_info(client)).freshness or {}
+            near_misses = await screen(cutoff=0.0, limit=_NEAR_MISS_LIMIT)
+    catalog = await _soft(_catalog, client.datasets)
+    freshness = (shaping.freshness(catalog) if catalog else None) or {}
     checked = {
         "dataset": dataset,
         "topics": topics,
@@ -410,19 +401,18 @@ async def search_entities(
             than query syntax (AND / OR, quotes, field:value).
     """
     client = _resolve_client()
-    kwargs: dict[str, Any] = {"datasets": [dataset]}
-    if schema is not None:
-        kwargs["schema"] = schema
-    if countries is not None:
-        kwargs["countries"] = countries
-    if topics is not None:
-        kwargs["topics"] = topics
-    try:
+    with _tool_errors():
         resp = await client.search(
-            q, limit=_cap(limit), offset=offset, fuzzy=fuzzy, simple=simple, **kwargs
+            q,
+            limit=_cap(limit),
+            offset=offset,
+            fuzzy=fuzzy,
+            simple=simple,
+            datasets=[dataset],
+            schema=schema,
+            countries=countries,
+            topics=topics,
         )
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
     results = [shaping.shape(r) for r in resp.results]
     out = {**shaping.page_info(resp.total, offset, len(results)), "results": results}
     return await _with_legend(out, client)
@@ -462,10 +452,8 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
             source records merged into it), without relations.
     """
     client = _resolve_client()
-    try:
+    with _tool_errors():
         entity = await client.fetch(entity_id, nested=False)
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
     if full:
         return await _with_legend(shaping.shape_raw(entity), client)
     try:
@@ -509,10 +497,8 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     not be read.
     """
     client = _resolve_client()
-    try:
+    with _tool_errors():
         entity = await client.fetch(entity_id, nested=False)
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
     text_props = shaping.text_property_names(entity.schema_)
     edge_props = shaping.designation_props(entity.schema_)
     statement_calls = [
@@ -542,7 +528,9 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
             designations[prop] = [e for e in resp.results if isinstance(e, Entity)]
         elif isinstance(resp, YenteError):
             out["relations_unavailable"] = describe_error(resp)
-    unofficial = _unofficial(await _catalog_info(client))
+    catalog = await _soft(_catalog, client.datasets)
+    records = shaping.dataset_records(catalog) if catalog else {}
+    unofficial = {name for name, rec in records.items() if rec.get("official") is False}
     entries = shaping.text_entries(entity, statements, designations, unofficial)
     out.update(shaping.page_entries(entries, offset, _TEXT_PAGE_CHARS))
     return await _with_legend(out, client)
@@ -577,7 +565,7 @@ async def fetch_entity_relations(
             "(fetch_entity_by_id) for its risk basis."
         )
     client = _resolve_client()
-    try:
+    with _tool_errors():
         if prop is None:
             overview = await client.adjacent(
                 entity_id, limit=_cap(limit) or _OVERVIEW_EDGES, offset=offset
@@ -592,8 +580,6 @@ async def fetch_entity_relations(
             out = shaping.shape_relation_page(block, entity_id, prop)
             codes = shaping.collect_codes(out)
             codes.add_properties(None, [prop])
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
     return await _with_legend(out, client, codes)
 
 
@@ -622,7 +608,7 @@ async def fetch_entity_statements(
         limit: Statements per page, at most 25.
     """
     client = _resolve_client()
-    try:
+    with _tool_errors():
         resp = await client.statements(
             canonical_id=entity_id,
             prop=prop,
@@ -631,8 +617,6 @@ async def fetch_entity_statements(
             limit=_cap(limit),
             offset=offset,
         )
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
     return await _with_legend(shaping.shape_statements(resp), client)
 
 
@@ -686,23 +670,20 @@ async def describe(
         return await lookup(name)
     if kind == "schema":
         if name is None:
-            return {"schemata": introspect.schema_index()}
-        try:
-            return introspect.describe_schema(name)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
+            return {"schemata": schemas.schema_index(matchable_only=True)}
+        if not schemas.has_schema(name):
+            raise _unknown_schema(name)
+        return schemas.describe_schema(name)
     if kind == "topics":
-        return {"about": _TOPICS_ABOUT, "topics": introspect.topic_values()}
-    return introspect.country_values()
+        return {"about": _TOPICS_ABOUT, "topics": schemas.type_values("topic")}
+    return schemas.type_values("country")
 
 
 async def _describe_dataset(name: str) -> dict[str, Any]:
     """One dataset record from the live catalog, with its legend."""
     client = _resolve_client()
-    try:
-        resp = await client.datasets()
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
+    with _tool_errors():
+        resp = await _catalog.get(client.datasets)
     for dataset in resp.datasets:
         if dataset.name == name:
             out = dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
@@ -719,10 +700,8 @@ async def _describe_dataset(name: str) -> dict[str, Any]:
 async def _describe_program(key: str) -> dict[str, Any]:
     """One sanctions program by key or alias, with its legend."""
     client = _resolve_client()
-    try:
-        catalog = await _program_catalog(client)
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
+    with _tool_errors():
+        catalog = (await _programs.get(client.programs)).data
     for program in catalog:
         if program.key == key or key in program.aliases:
             out = program.model_dump(mode="json", exclude_none=True)
@@ -742,13 +721,13 @@ async def _describe_program(key: str) -> dict[str, Any]:
 @mcp.resource("ftm://schemata")
 def ftm_schemata() -> list[dict[str, Any]]:
     """Index of matchable FtM schemata."""
-    return introspect.schema_index()
+    return schemas.schema_index(matchable_only=True)
 
 
 @mcp.resource("ftm://schema/{name}")
 def ftm_schema(name: str) -> dict[str, Any]:
     """Property detail for one FtM schema."""
-    return introspect.describe_schema(name)
+    return schemas.describe_schema(name)
 
 
 # Topic / country vocabularies are served by the describe *tool* above, not

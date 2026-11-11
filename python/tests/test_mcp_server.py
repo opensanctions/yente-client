@@ -12,6 +12,12 @@ from yente_client.mcp import server
 from yente_client.mcp._deps import ToolError
 
 
+@pytest.fixture(autouse=True)
+def fresh_caches() -> None:
+    """Start every test with empty catalog, program and algorithm caches."""
+    server._reset_caches()
+
+
 @pytest.fixture
 def use_api(
     monkeypatch: pytest.MonkeyPatch,
@@ -29,7 +35,6 @@ def use_api(
 
     client = make_async_client(handler=handler)
     monkeypatch.setattr(server, "_resolve_client", lambda: client)
-    monkeypatch.setattr(server, "_catalog_info_cache", None)
 
 
 async def _call(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -95,3 +100,25 @@ async def test_results_are_sent_as_text_only() -> None:
 async def test_unknown_dataset_suggests_close_names(use_api: None) -> None:
     with pytest.raises(ToolError, match="Unknown dataset 'ofac'. Closest: "):
         await server.mcp.call_tool("describe", {"kind": "dataset", "name": "ofac"})
+
+
+async def test_describe_unknown_schema_suggests_close_names() -> None:
+    with pytest.raises(ToolError, match="Unknown schema 'Persn'. Closest: Person"):
+        await _call("describe", {"kind": "schema", "name": "Persn"})
+
+
+async def test_match_unknown_schema_suggests_close_names() -> None:
+    with pytest.raises(ToolError, match="Unknown schema 'Compnay'. Closest: Company"):
+        await _call("match_entity", {"schema": "Compnay", "properties": {"name": ["Acme"]}})
+
+
+async def test_describe_schema_index_is_matchable_only() -> None:
+    out = await _call("describe", {"kind": "schema"})
+    names = {s["name"] for s in out["schemata"]}
+    assert {"Person", "Company"} <= names
+    assert "Document" not in names
+
+
+async def test_describe_countries_lists_codes() -> None:
+    out = await _call("describe", {"kind": "countries"})
+    assert out["us"]
