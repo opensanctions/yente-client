@@ -77,6 +77,10 @@ The tools forward the access token to the API. The server never uses
 accept the access tokens. To use an API key instead, run `yente-mcp` yourself
 without OAuth2.
 
+This token pass-through is a deliberate difference from the MCP specification.
+It is safe only when the MCP server and the API have the same operator and the
+same issuer.
+
 ## Connecting a client
 
 Claude Code:

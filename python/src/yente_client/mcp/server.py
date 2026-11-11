@@ -138,6 +138,16 @@ def _resolve_client() -> AsyncClient:
     Uses the request's bearer token. A request without one uses the server's
     ``OPENSANCTIONS_API_KEY``, so ``yente-mcp`` runs on localhost against a
     real API with no auth set up in the MCP client.
+
+    With OAuth2, the bearer token is the caller's access token, and the API
+    gets that same token. The MCP specification forbids this pass-through
+    ("MCP servers MUST NOT pass through the token it received from the MCP
+    client"). The rule stops an API from accepting a token that the issuer
+    made for a different service. That risk does not apply here: the server
+    and the API are one resource with one issuer, and the API operator
+    explicitly accepts the MCP endpoint as a token audience. Token exchange
+    (RFC 8693) obeys the rule, but it needs support from the issuer, a second
+    request for each call, and a client secret on the server.
     """
     # FastMCP leaves credential headers out unless they are asked for by name.
     headers = get_http_headers(include={"authorization"})
