@@ -392,7 +392,10 @@ async def search_entities(
     (vessels flagged to a country, companies with a word in their name).
     Never use it to decide whether a person or company is listed — results
     carry no score or explanation, so neither a hit nor its absence proves
-    anything. Use match_entity for that, even with just a name.
+    anything. Use match_entity for that, even with just a name. Results are
+    abridged like match candidates: identifying properties and datasets, with
+    `not_shown` naming what the full record adds; fetch_entity_by_id on the
+    `id` returns it.
 
     Args:
         limit: Results per page, at most 25.
@@ -413,7 +416,7 @@ async def search_entities(
             countries=countries,
             topics=topics,
         )
-    results = [shaping.shape(r) for r in resp.results]
+    results = [shaping.shape(r, "brief") for r in resp.results]
     out = {**shaping.page_info(resp.total, offset, len(results)), "results": results}
     return await _with_legend(out, client)
 
@@ -434,9 +437,9 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
     `relations` summarizes every other relationship type (ownership,
     directorships, family, associates, …): its total and first few edges. Each
     edge keeps its own details (role, share, relationship, dates); the entity
-    at its far end is just {id, caption, schema, topics}, marked `abridged`:
-    a missing field there is not shown, not unknown — call
-    fetch_entity_by_id on that `id` for its record. Page one type in full
+    at its far end is abridged like a match candidate — identifying
+    properties, datasets and `not_shown`: a missing field there is not shown,
+    not unknown — call fetch_entity_by_id on that `id` for its record. Page one type in full
     with fetch_entity_relations. Prose is left out: `descriptions` counts the
     notes and designation reasons that fetch_entity_descriptions returns. The
     record's `first_seen` / `last_change` say when it entered the data and
@@ -551,9 +554,9 @@ async def fetch_entity_relations(
     of a profile's `relations`, or `sanctions` / `risks` /
     `positionOccupancies`. For a company, "ownershipOwner" lists what it owns
     and "ownershipAsset" who owns it. Each edge carries its own properties
-    (role, share, dates); the entity at its far end is {id, caption, schema,
-    topics}, marked `abridged` — call fetch_entity_by_id on its `id` for its
-    record. Page with
+    (role, share, dates); the entity at its far end is abridged — identifying
+    properties, datasets and `not_shown` — call fetch_entity_by_id on its `id`
+    for its record. Page with
     `limit` (default and maximum 25) / `offset` until `next_offset` is null;
     `total` counts every edge, read or not. With no `prop`, returns every
     type with its total and first few edges.

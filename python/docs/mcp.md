@@ -108,10 +108,13 @@ Every response follows the same shape:
   data was last updated.
 - **Lists** carry `total`, `returned` and `next_offset`. A `next_offset` of
   `null` means the list is complete.
+- **Entities to look up next are abridged.** Match candidates, search
+  results and the entity at the far end of a relationship carry their
+  identifying properties (such as birth date, nationality, jurisdiction or
+  IMO number), their datasets and `not_shown`, the properties their full
+  record adds, marked `abridged: true`. Profiling that `id` gives the record.
 - **Relationship edges keep their own details** (role, share, relationship,
-  dates). The entity at the far end is a reference: `{id, caption, schema,
-  topics}` marked `abridged: true`, enough to spot a sanctioned neighbour. Profiling that `id` gives
-  its record. A position's post is part of the position held, so it keeps
+  dates). A position's post is part of the position held, so it keeps
   key properties such as its country. Only top-level records carry
   `first_seen` and `last_change`.
 - **Prose has its own tool.** Biography notes and designation reasons are

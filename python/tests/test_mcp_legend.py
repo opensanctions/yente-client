@@ -72,8 +72,9 @@ def test_legend_gathers_codes_across_the_response() -> None:
         },
     )
     codes = collect_codes(shape_profile(entity, adjacency))
-    # a country-looking registration number stays out; a ref carries no properties
-    assert codes.values["country"] == {"ru", "us"}
+    # a country-looking registration number stays out; the far end's
+    # featured jurisdiction resolves like any other value
+    assert codes.values["country"] == {"ru", "us", "cy"}
     assert codes.datasets == {"eu_fsf", "us_ofac_sdn"}
     assert codes.programs == {"US-RUSHAR"}
     assert {"nationality", "programId", "asset"} <= codes.properties.keys()

@@ -4,20 +4,19 @@ yente entities are large — every property, referents, nested provenance.
 Handing that raw to a model buries the signal, so every tool projects entities
 through one function, :func:`shape`, at one of three levels:
 
-- ``ref``: identity plus topics. The far end of a relationship (an owner, a
-  relative), so a sanctioned neighbour is visible; its record is one
+- ``stub``: identity, topics and the schema's FtM ``featured`` properties. The
+  post of a position held, which is part of the position rather than a
+  neighbour, and the designating record of a description.
+- ``brief``: stub plus datasets and ``not_shown``, the names of the properties
+  its full record adds. Every entity an agent would look up next: a search
+  result, a match candidate (which adds the match evidence), and the far end
+  of a relationship (an owner, a relative). Its record is one
   ``fetch_entity_by_id`` call away.
-- ``stub``: ref plus the schema's FtM ``featured`` properties. The post of a
-  position held, which is part of the position rather than a neighbour, the
-  designating record of a description, and a match candidate — which adds
-  datasets, the match evidence and ``not_shown``, the names of the properties
-  its full record adds.
-- ``summary``: stub plus datasets and every short-valued property. Search
-  results, relation edges, and the record in a profile. Only a
-  top-level record carries ``first_seen`` / ``last_change``; on edges the
-  dates are noise.
+- ``summary``: datasets and every short-valued property. Relation edges and
+  the record in a profile. Only a top-level record carries ``first_seen`` /
+  ``last_change``; on edges the dates are noise.
 
-``ref`` and ``stub`` carry ``abridged: true``, so a missing field reads as
+``stub`` and ``brief`` carry ``abridged: true``, so a missing field reads as
 "not shown" rather than "not known".
 
 Prose — properties of the FtM ``text`` type, such as ``notes`` or a sanction's
@@ -57,7 +56,7 @@ from yente_client.schemas import (
     type_spec,
 )
 
-Level = Literal["ref", "stub", "summary"]
+Level = Literal["stub", "brief", "summary"]
 
 
 # Value types left out of every view. `text` / `html` are the prose served by
@@ -111,17 +110,19 @@ def shape(
     topics = _topic_labels(entity)
     if topics:
         shaped["topics"] = topics
-    if level == "ref":
-        shaped["abridged"] = True
-        return shaped
-    if level == "stub":
+    if level in ("stub", "brief"):
         props = _stub_properties(entity)
         if props:
             shaped["properties"] = props
+    if level != "stub" and entity.datasets:
+        shaped["datasets"] = entity.datasets
+    if level == "brief":
+        not_shown = _not_shown(entity)
+        if not_shown:
+            shaped["not_shown"] = not_shown
+    if level != "summary":
         shaped["abridged"] = True
         return shaped
-    if entity.datasets:
-        shaped["datasets"] = entity.datasets
     shaped["properties"] = _properties(entity, source_id, nested)
     if source_id is None:
         for key in ("first_seen", "last_change"):
@@ -132,24 +133,8 @@ def shape(
 
 
 def shape_scored(entity: ScoredEntity) -> dict[str, Any]:
-    """Project a match candidate: stub plus datasets, the evidence, and what's left out.
-
-    ``not_shown`` names the summary properties the stub drops, so the model
-    sees which facts the full record holds (a passport number, an address)
-    without their values.
-    """
-    shaped = shape(entity, "stub")
-    if entity.datasets:
-        shaped["datasets"] = entity.datasets
-    summary = _property_names(entity.schema_, "summary")
-    featured = set(_featured_names(entity.schema_))
-    not_shown = sorted(
-        name
-        for name, values in entity.properties.items()
-        if values and name in summary and name not in featured
-    )
-    if not_shown:
-        shaped["not_shown"] = not_shown
+    """Project a match candidate: a ``brief`` plus the match evidence."""
+    shaped = shape(entity, "brief")
     shaped["score"] = entity.score
     shaped["match"] = entity.match
     shaped["explanation"] = _explanation(entity)
@@ -224,12 +209,12 @@ def shape_relation_page(
 ) -> dict[str, Any]:
     """Shape one edge type's page: paging envelope plus edges.
 
-    The far end of an ordinary relationship is a ``ref``; in a profile section
+    The far end of an ordinary relationship is a ``brief``; in a profile section
     (:data:`PROFILE_SECTIONS`) it is a ``stub``, since a position's post is
     part of the position held. Designation rows drop their caption, which
     repeats the program.
     """
-    nested: Level = "stub" if prop in PROFILE_SECTIONS else "ref"
+    nested: Level = "stub" if prop in PROFILE_SECTIONS else "brief"
     results: list[dict[str, Any]] = []
     for edge in block.results:
         if not isinstance(edge, Entity):
@@ -290,7 +275,7 @@ def text_property_names(schema: str) -> tuple[str, ...]:
 
 def designation_props(schema: str) -> tuple[str, ...]:
     """The :data:`DESIGNATION_SECTIONS` relations ``schema`` actually has."""
-    allowed = _property_names(schema, "summary")
+    allowed = _summary_names(schema)
     return tuple(p for p in DESIGNATION_SECTIONS if p in allowed)
 
 
@@ -394,7 +379,7 @@ def unknown_name(kind: str, name: str, titles: Mapping[str, str | None]) -> str:
 
 def _properties(entity: Entity, source_id: str | None, nested: Level) -> dict[str, list[Any]]:
     """Pick the entity's summary properties; nested entities are shaped at ``nested``."""
-    allowed = _property_names(entity.schema_, "summary")
+    allowed = _summary_names(entity.schema_)
     out: dict[str, list[Any]] = {}
     for name, values in entity.properties.items():
         if name not in allowed:
@@ -423,6 +408,21 @@ def _stub_properties(entity: Entity) -> dict[str, list[str]]:
         if values:
             out[name] = values
     return out
+
+
+def _not_shown(entity: Entity) -> list[str]:
+    """Name the summary properties a stub leaves out, without their values.
+
+    Tells the model which facts the full record holds (a passport number, an
+    address), so it knows when a ``fetch_entity_by_id`` call would add something.
+    """
+    summary = _summary_names(entity.schema_)
+    featured = set(_featured_names(entity.schema_))
+    return sorted(
+        name
+        for name, values in entity.properties.items()
+        if values and name in summary and name not in featured
+    )
 
 
 def _prose_values(entity: Entity) -> dict[str, list[str]]:
@@ -474,7 +474,7 @@ def _featured_names(schema: str) -> tuple[str, ...]:
     """``schema``'s FtM featured properties, minus entity- and topic-typed ones."""
     if not schemas.has_schema(schema):
         return ()
-    allowed = _property_names(schema, "summary")
+    allowed = _summary_names(schema)
     specs = property_specs(schema)
     return tuple(
         name
@@ -484,10 +484,10 @@ def _featured_names(schema: str) -> tuple[str, ...]:
 
 
 @functools.cache
-def _property_names(schema: str, level: Level) -> frozenset[str]:
-    """Names of ``schema``'s properties shown at ``level`` (empty for unknown schemata).
+def _summary_names(schema: str) -> frozenset[str]:
+    """Names of ``schema``'s properties a summary shows (empty for unknown schemata).
 
-    Both levels share one set; ``stub`` narrows it further to featured names.
+    Stubs and briefs narrow this to the featured names.
     """
     if not schemas.has_schema(schema):
         return frozenset()

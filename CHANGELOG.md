@@ -14,9 +14,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `fetch_entity_by_id` now returns a profile: the entity's record, its
   sanctions, risk listings and positions held in full, and a summary of each
   other relationship type, with `full=True` for the raw record. Relationship
-  edges keep their own details, but the entity at the far end is reduced to
-  `{id, caption, schema, topics}` marked `abridged: true`, and only top-level
-  records carry
+  edges keep their own details, and the entity at the far end is abridged
+  like a match candidate. Only top-level records carry
   `first_seen` / `last_change`. If the
   relationships can't be read, the record still comes back, flagged with
   `relations_unavailable`. Prose (biography notes, sanction and risk
@@ -57,11 +56,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instructions now explain the data model and the rules shared by every
   tool; `search_entities` is described as keyword browsing, never a way to
   decide whether someone is listed.
-- **MCP `match_entity` candidates are abridged.** Each candidate carries its
-  identifying properties (the schema's featured ones, such as birth date,
-  nationality, registration or IMO number), its datasets and the match
-  evidence, marked `abridged: true`. `not_shown` names the properties its
-  full record adds; `fetch_entity_by_id` returns them.
+- **MCP match candidates, search results and relationship far ends are
+  abridged.** Each carries its identifying properties (the schema's featured
+  ones, such as birth date, nationality, registration or IMO number) and its
+  datasets, marked `abridged: true`; match candidates add the match evidence.
+  `not_shown` names the properties the full record adds;
+  `fetch_entity_by_id` returns them. A 25-result search page shrinks to about
+  a third of its former size.
 - **MCP `describe_*` tools merged into `describe(kind, name)`.** `kind` is
   one of `schema`, `topics`, `countries`, `dataset` or `program`.
 - **MCP tool results are sent as text only.** Tools declare no output

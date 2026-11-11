@@ -122,3 +122,22 @@ async def test_describe_schema_index_is_matchable_only() -> None:
 async def test_describe_countries_lists_codes() -> None:
     out = await _call("describe", {"kind": "countries"})
     assert out["us"]
+
+
+async def test_search_results_are_abridged(
+    monkeypatch: pytest.MonkeyPatch,
+    make_async_client: Callable[..., AsyncClient],
+    load_fixture: Callable[[str], dict[str, Any]],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/search/"):
+            return httpx.Response(200, json=load_fixture("search_basic"))
+        return httpx.Response(404, json={"detail": "not mocked"})
+
+    client = make_async_client(handler=handler)
+    monkeypatch.setattr(server, "_resolve_client", lambda: client)
+    out = await _call("search_entities", {"q": "Zacharov"})
+    first = out["results"][0]
+    assert first["abridged"] is True
+    assert first["not_shown"] == ["firstName", "lastName"]
+    assert "firstName" not in first.get("properties", {})

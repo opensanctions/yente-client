@@ -227,12 +227,13 @@ def test_shape_scored_caps_positives_but_keeps_every_negative() -> None:
     assert list(explanation) == ["pen2", "b", "d", "c", "pen1"]
 
 
-def test_shape_relation_edge_refs_counterparty_with_topics() -> None:
+def test_shape_relation_edge_briefs_the_far_end() -> None:
     asset = Entity(
         id="c1",
         caption="ACME Ltd",
         schema="Company",
-        properties={"topics": ["sanction"], "jurisdiction": ["cy"]},
+        datasets=["ru_egrul"],
+        properties={"topics": ["sanction"], "jurisdiction": ["cy"], "address": ["Nicosia"]},
     )
     edge = Entity(
         id="own1",
@@ -255,6 +256,9 @@ def test_shape_relation_edge_refs_counterparty_with_topics() -> None:
             "caption": "ACME Ltd",
             "schema": "Company",
             "topics": {"sanction": type_values("topic")["sanction"]},
+            "properties": {"jurisdiction": ["cy"]},
+            "datasets": ["ru_egrul"],
+            "not_shown": ["address"],
             "abridged": True,
         }
     ]
@@ -278,7 +282,9 @@ def test_shape_relation_page_keeps_position_post_stubs() -> None:
     )
     out = shape_relation_page(_page([occupancy], total=1), "P1", "positionOccupancies")
     row = out["results"][0]
-    assert row["properties"]["post"][0]["properties"] == {"country": ["ru"]}
+    post_stub = row["properties"]["post"][0]
+    assert post_stub["properties"] == {"country": ["ru"]}
+    assert "not_shown" not in post_stub  # a stub, not a brief: the post is part of the edge
     assert row["properties"]["startDate"] == ["2016"]
     assert "first_seen" not in row
 
@@ -293,10 +299,10 @@ def test_shape_relation_page_drops_designation_captions() -> None:
     assert row["properties"] == {"program": ["Reciprocal"], "authority": ["OFAC"]}
 
 
-def test_only_refs_and_stubs_are_marked_abridged() -> None:
+def test_only_stubs_and_briefs_are_marked_abridged() -> None:
     entity = Entity(id="P1", caption="Jane", schema="Person", properties={"name": ["Jane"]})
-    assert shape(entity, "ref")["abridged"] is True
     assert shape(entity, "stub")["abridged"] is True
+    assert shape(entity, "brief")["abridged"] is True
     assert "abridged" not in shape(entity)
 
 
