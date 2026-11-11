@@ -212,9 +212,7 @@ with Client(api_key="...") as client, open("customers.csv") as fh:
         row["ref"]: Person(name=row["full_name"], birthDate=row["born"] or None)
         for row in csv.DictReader(fh)
     }
-    stream = client.match_iter(
-        rows.items(), workers=8, datasets=["sanctions"], on_error="collect"
-    )
+    stream = client.match_iter(rows.items(), workers=8, datasets=["sanctions"], on_error="collect")
     for ref, response in stream:
         if isinstance(response, MatchError):
             print(ref, "failed:", response.exception)

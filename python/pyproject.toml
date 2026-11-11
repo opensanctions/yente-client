@@ -31,7 +31,7 @@ cli = [
     "rich>=13",
 ]
 mcp = [
-    "fastmcp>=3.4",
+    "fastmcp>=4.0",
 ]
 dev = [
     "pytest>=8",
@@ -48,7 +48,7 @@ dev = [
     "rich>=13",
     # MCP server deps so `make test` can import yente_client.mcp.server.
     # Mirrors yente-client[mcp].
-    "fastmcp>=3.4",
+    "fastmcp>=4.0",
     # Docs build (`make docs`): mkdocs + Material theme + mkdocstrings extracts
     # docstrings inline at build time; no separate regeneration step needed.
     "yente-client[docs]",

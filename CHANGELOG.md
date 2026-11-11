@@ -8,6 +8,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The `mcp` extra needs `fastmcp>=4.0`** (MCP SDK 2.x). The server uses
+  the SDK 2.x field names for tool annotations and icons.
+
 ## [0.2.0] - 2026-07-23
 
 ### Added

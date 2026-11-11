@@ -48,7 +48,7 @@ _ICON_BASE = "https://assets.opensanctions.org/images/nura"
 
 # Every tool here only reads (screens, searches, fetches, describes) — nothing
 # mutates server state — so they all share this read-only annotation.
-_READ_ONLY = ToolAnnotations(readOnlyHint=True)
+_READ_ONLY = ToolAnnotations(read_only_hint=True)
 
 # Every code in an entity-bearing result resolves inline: topic and country
 # labels come from the bundled model (see shaping), dataset and program titles
@@ -79,9 +79,9 @@ mcp: FastMCP = FastMCP(
     icons=[
         # Full-colour brand mark first (renders on any background), favicons as
         # smaller fallbacks. Clients pick by `sizes`.
-        Icon(src=f"{_ICON_BASE}/logo-icon-color.png", mimeType="image/png", sizes=["290x310"]),
-        Icon(src=f"{_ICON_BASE}/favicon-32.png", mimeType="image/png", sizes=["32x32"]),
-        Icon(src=f"{_ICON_BASE}/favicon-16.png", mimeType="image/png", sizes=["16x16"]),
+        Icon(src=f"{_ICON_BASE}/logo-icon-color.png", mime_type="image/png", sizes=["290x310"]),
+        Icon(src=f"{_ICON_BASE}/favicon-32.png", mime_type="image/png", sizes=["32x32"]),
+        Icon(src=f"{_ICON_BASE}/favicon-16.png", mime_type="image/png", sizes=["16x16"]),
     ],
     instructions=env.mcp_instructions(),
 )
