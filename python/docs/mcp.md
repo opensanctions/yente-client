@@ -21,7 +21,10 @@ uvx --from 'yente-client[mcp]' yente-mcp
 Other ways to run it:
 
 ```bash
+# Install it on your PATH as a uv tool:
 uv tool install 'yente-client[mcp]'
+
+# With pip, in a virtual environment:
 pip install 'yente-client[mcp]'
 ```
 

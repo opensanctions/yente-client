@@ -21,7 +21,10 @@ uvx --from 'yente-client[cli]' yente-cli --help
 Other ways to run it:
 
 ```bash
+# Install it on your PATH as a uv tool:
 uv tool install 'yente-client[cli]'
+
+# With pip, in a virtual environment:
 pip install 'yente-client[cli]'
 ```
 
