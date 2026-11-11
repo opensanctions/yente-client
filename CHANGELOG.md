@@ -8,6 +8,25 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP server output reshaped around what an analyst needs to judge a hit.**
+  `fetch_entity_by_id` now returns a profile: the entity's record, its
+  sanctions, risk listings and positions held in full, and a summary of each
+  other relationship type, with `full=True` for the raw record. If the
+  relationships can't be read, the record still comes back, flagged with
+  `relations_unavailable`. Prose (biography notes, sanction and risk
+  reasons) moves to the new `fetch_entity_descriptions` tool, which credits
+  each text to its source dataset, puts official sources first and pages long
+  histories. The response legend marks unofficial sources in
+  `unofficial_datasets`. Match candidates carry the compared values
+  behind each scoring feature. `match_entity` gains `cutoff` and returns
+  `near_misses` when nothing clears the default cutoff.
+  `fetch_entity_statements` gains `sort` and reports `last_seen`. Every
+  response resolves its codes through one `legend` and pages lists with
+  `next_offset`. Shown properties are now chosen per schema, so vessels
+  show their IMO number and flag.
+
 ## [0.2.0] - 2026-07-23
 
 ### Added

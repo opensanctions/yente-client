@@ -58,11 +58,12 @@ Screening and investigation:
 
 | Tool | Purpose |
 | --- | --- |
-| `match_entity` | Screen one entity, query-by-example; returns scored candidates. Use for any matching task, even with partial input. |
+| `match_entity` | Screen one entity, query-by-example; returns scored candidates with the evidence behind each score. Use for any matching task, even with partial input. |
 | `search_entities` | Free-text search for end-user search UIs; returns unscored entities. |
-| `fetch_entity_by_id` | One entity's full record, by OpenSanctions ID. |
-| `fetch_entity_relations` | Walk sanctions, ownership, and family edges, paginated. |
-| `fetch_entity_statements` | Statement-level provenance: which source asserted a value (hosted API only). |
+| `fetch_entity_by_id` | Profile one entity by OpenSanctions ID: its record, its sanctions, risk listings and positions held in full, and a summary of its other relationships. |
+| `fetch_entity_descriptions` | What sources write about an entity, verbatim: sanction and risk reasons, then descriptions and biography notes, each credited to its source dataset. |
+| `fetch_entity_relations` | Page through one relationship type (ownership, directorships, family, …) in full. |
+| `fetch_entity_statements` | Statement-level provenance: which source asserted a value, and when (hosted API only). |
 
 Vocabulary and metadata lookups:
 
@@ -74,10 +75,34 @@ Vocabulary and metadata lookups:
 | `describe_dataset` | Dataset metadata from the live catalog. |
 | `describe_program` | Sanctions-program metadata behind `programId` codes. |
 
-Results resolve their own codes: topic and country labels are attached
-inline from the bundled FtM model, and dataset / program titles ride along
-as legends. Agents don't have to guess what an identifier like `crime.war`
-means — the label is next to the code.
+Results resolve their own codes. Topic labels sit inline on each entity,
+and every other code in a response (countries, datasets, sanctions programs,
+property names) resolves through a single `legend` attached to it. The
+legend's `unofficial_datasets` marks sources whose publisher isn't an official
+body (aggregators, NGOs, Wikidata), like the "Unofficial" badge on the
+website. Agents
+don't have to guess what an identifier like `crime.war` or `us_ofac_sdn`
+means.
+
+Every response follows the same shape:
+
+- **Match candidates** carry an `explanation` with the scoring features and
+  the query and candidate values each one compared, such as two birth dates
+  that disagree. When nothing clears the cutoff, the closest candidates come
+  back as `near_misses`, so a "no match" can still be explained. `checked`
+  echoes the dataset and topics that were screened.
+- **Lists** carry `total`, `returned` and `next_offset`. A `next_offset` of
+  `null` means the list is complete.
+- **Entities and relationship edges** carry `first_seen` and `last_change`
+  dates, and each counterparty in an edge carries its risk topics and key
+  properties, such as the country of a position held.
+- **Prose has its own tool.** Biography notes and designation reasons are
+  left out of every other response; the profile counts them under
+  `descriptions`, and `fetch_entity_descriptions` returns them with
+  per-source credits, official sources first.
+- **Sanctions and risk listings stay separate.** A sanction imposes a
+  restriction. A risk listing (a watch list, an advisory, a persons-of-interest
+  register) names the entity without one.
 
 Matching algorithms are deliberately not exposed. Algorithm choice is a
 tuning decision below the assistant's altitude; the server default applies.
