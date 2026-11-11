@@ -132,6 +132,41 @@ def prepare_http_kwargs(
     return kwargs
 
 
+def read_json(response: httpx.Response) -> Any:
+    """Decode a response's JSON, raising the matching ``APIError`` on non-2xx."""
+    if not response.is_success:
+        raise_for_response(response)
+    return response.json()
+
+
+class ETagCache:
+    """Hold one ``(etag, body)`` pair per URL for ``If-None-Match`` revalidation.
+
+    Bodies are raw JSON, not validated models: callers re-validate, so a served
+    ``304`` can't leak mutable state between calls. A server that emits no
+    ``ETag`` leaves the cache empty, and every call stays a plain GET.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[str, Any]] = {}
+
+    def headers(self, url: str) -> dict[str, str]:
+        """Return the revalidation header for ``url``, if a body is held."""
+        entry = self._entries.get(url)
+        return {"If-None-Match": entry[0]} if entry is not None else {}
+
+    def read(self, url: str, response: httpx.Response) -> Any:
+        """Serve the held body on ``304 Not Modified``; otherwise decode and hold."""
+        entry = self._entries.get(url)
+        if response.status_code == 304 and entry is not None:
+            return entry[1]
+        body = read_json(response)
+        etag = response.headers.get("ETag")
+        if etag:
+            self._entries[url] = (etag, body)
+        return body
+
+
 def raise_for_response(response: httpx.Response) -> None:
     """Map a non-2xx ``httpx.Response`` to the right ``APIError`` subclass and raise.
 
