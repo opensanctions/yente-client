@@ -6,6 +6,7 @@ the only structural differences are language-level (``await``, ``async for``).
 """
 
 import asyncio
+import copy
 from collections.abc import AsyncIterator, Iterable
 from types import TracebackType
 from typing import Any, Literal, Self, overload
@@ -83,6 +84,19 @@ class AsyncClient:
         self._base_url = base_url
         # Per-URL (etag, body) pairs for _request_revalidated; see the sync client.
         self._etag_cache: dict[str, tuple[str, Any]] = {}
+        self._request_headers: dict[str, str] = {}
+
+    def with_api_key(self, api_key: str) -> Self:
+        """Return a client that sends ``api_key`` over this client's connections.
+
+        Use this to serve many API keys, such as one per caller, from one
+        connection pool. The returned client shares the ``httpx.AsyncClient`` and the
+        ETag cache of this one. Close only the original client: closing either
+        one closes the shared connections.
+        """
+        client = copy.copy(self)
+        client._request_headers = {**self._request_headers, "Authorization": f"ApiKey {api_key}"}
+        return client
 
     @property
     def user_agent(self) -> str:
@@ -112,7 +126,9 @@ class AsyncClient:
         :class:`TransportError` on connection-level failure.
         """
         try:
-            response = await self._http.request(method, path, **kwargs)
+            response = await self._http.request(
+                method, path, headers=self._request_headers, **kwargs
+            )
         except httpx.TransportError as exc:
             raise TransportError(str(exc)) from exc
 
@@ -123,7 +139,7 @@ class AsyncClient:
 
     async def _request_revalidated(self, url: str) -> Any:
         """Async mirror of :meth:`yente_client.client.Client._request_revalidated`."""
-        headers: dict[str, str] = {}
+        headers = dict(self._request_headers)
         cached = self._etag_cache.get(url)
         if cached is not None:
             headers["If-None-Match"] = cached[0]

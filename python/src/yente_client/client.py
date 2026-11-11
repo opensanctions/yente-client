@@ -1,5 +1,6 @@
 """Synchronous yente / OpenSanctions client."""
 
+import copy
 from collections.abc import Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Final, Literal, Self, overload
@@ -133,6 +134,19 @@ class Client:
         # validated models — callers re-validate, so a served 304 can't leak
         # mutable state between calls.
         self._etag_cache: dict[str, tuple[str, Any]] = {}
+        self._request_headers: dict[str, str] = {}
+
+    def with_api_key(self, api_key: str) -> Self:
+        """Return a client that sends ``api_key`` over this client's connections.
+
+        Use this to serve many API keys, such as one per caller, from one
+        connection pool. The returned client shares the ``httpx.Client`` and the
+        ETag cache of this one. Close only the original client: closing either
+        one closes the shared connections.
+        """
+        client = copy.copy(self)
+        client._request_headers = {**self._request_headers, "Authorization": f"ApiKey {api_key}"}
+        return client
 
     @property
     def user_agent(self) -> str:
@@ -157,7 +171,7 @@ class Client:
         and ``TransportError`` on connection-level failure.
         """
         try:
-            response = self._http.request(method, path, **kwargs)
+            response = self._http.request(method, path, headers=self._request_headers, **kwargs)
         except httpx.TransportError as exc:
             raise TransportError(str(exc)) from exc
 
@@ -174,7 +188,7 @@ class Client:
         exactly :meth:`_request` behavior, so this is safe to route any GET
         endpoint through — it lights up when the server grows validator support.
         """
-        headers: dict[str, str] = {}
+        headers = dict(self._request_headers)
         cached = self._etag_cache.get(url)
         if cached is not None:
             headers["If-None-Match"] = cached[0]

@@ -165,3 +165,23 @@ async def test_async_transport_error_wrapped(make_async_client) -> None:
     async with make_async_client(handler=handler) as c:
         with pytest.raises(TransportError):
             await c._request("GET", "/x")
+
+
+async def test_async_with_api_key_revalidates_over_shared_etag_cache(
+    make_async_client, load_fixture
+) -> None:
+    payload = load_fixture("programs")
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        etag = request.headers.get("If-None-Match")
+        seen.append((request.headers["Authorization"], etag))
+        if etag == '"v1"':
+            return httpx.Response(304)
+        return httpx.Response(200, json=payload, headers={"ETag": '"v1"'})
+
+    async with make_async_client(handler=handler, api_key="base") as base:
+        await base.programs()
+        r = await base.with_api_key("other").programs()
+    assert [p.key for p in r.data] == ["US-RUSHAR", "EU-UKR"]
+    assert seen == [("ApiKey base", None), ("ApiKey other", '"v1"')]
