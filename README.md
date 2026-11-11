@@ -11,19 +11,10 @@ persons (PEPs), and watchlists.
 ## Install
 
 ```bash
-pip install yente-client            # Python SDK
-```
-
-Run the command-line tool and the MCP server with
-[uv](https://docs.astral.sh/uv/), no install step needed:
-
-```bash
+pip install yente-client                          # Python SDK
 uvx --from 'yente-client[cli]' yente-cli --help   # `yente-cli` command-line tool
 uvx --from 'yente-client[mcp]' yente-mcp          # `yente-mcp` server for LLM agents
 ```
-
-To install them with pip instead, use the `cli` and `mcp` extras:
-`pip install 'yente-client[cli,mcp]'`.
 
 ## Quickstart
 

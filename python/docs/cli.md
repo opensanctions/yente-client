@@ -16,33 +16,14 @@ use the SDK for embedded screening and long-running services.
 
 ```bash
 uvx --from 'yente-client[cli]' yente-cli --help
-```
 
-The `--from` value names the PyPI package, `yente-client`, and its `cli`
-extra. `uvx yente-cli` on its own does not work: no PyPI package has that
-name.
-
-To put `yente-cli` on your `PATH` permanently, install it as a uv tool:
-
-```bash
+# Or install it on your PATH:
 uv tool install 'yente-client[cli]'
-yente-cli --help
-```
-
-Other ways to run it:
-
-```bash
-# Inside a uv project, or with a throwaway environment:
-uv run --with 'yente-client[cli]' yente-cli --help
-
-# With pip, in a virtual environment:
 pip install 'yente-client[cli]'
 ```
 
 The `[cli]` extra pulls in `typer` and `rich`. Without it, `yente-cli`
-emits a one-line install hint and exits. The examples on this page use the
-short `yente-cli` form; prefix them with `uvx --from 'yente-client[cli]'`
-if you did not install the tool.
+emits a one-line install hint and exits.
 
 Authenticate by exporting your API key (the same one the SDK uses):
 

@@ -9,19 +9,10 @@ Full documentation, including the tutorial and API reference, lives at
 ## Install
 
 ```bash
-pip install yente-client            # SDK only
-```
-
-Run the command-line tool and the MCP server with
-[uv](https://docs.astral.sh/uv/), no install step needed:
-
-```bash
+pip install yente-client                          # SDK only
 uvx --from 'yente-client[cli]' yente-cli --help   # `yente-cli` command-line tool
 uvx --from 'yente-client[mcp]' yente-mcp          # `yente-mcp` server for LLM agents
 ```
-
-To install them with pip instead, use the extras:
-`pip install 'yente-client[cli]'` or `pip install 'yente-client[mcp]'`.
 
 Python 3.11+; runtime deps are `pydantic` and `httpx`. The `[cli]` extra
 adds `typer` and `rich`; the `[mcp]` extra adds `fastmcp`. The
@@ -103,10 +94,8 @@ Person(notARealProp="X")  # ValidationError — extra="forbid"
 
 ## CLI
 
-The `yente-cli` binary mirrors the SDK. Run it with
-`uvx --from 'yente-client[cli]' yente-cli`, or install it with
-`uv tool install 'yente-client[cli]'` (or `pip install 'yente-client[cli]'`)
-for the short form below:
+The `yente-cli` binary mirrors the SDK
+(`uv tool install 'yente-client[cli]'`):
 
 ```bash
 export OPENSANCTIONS_API_KEY=sk_...        # or pass --api-key

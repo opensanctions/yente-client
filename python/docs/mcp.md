@@ -16,19 +16,10 @@ and CLI.
 ```bash
 export OPENSANCTIONS_API_KEY=...   # fallback key, handy for local runs
 uvx --from 'yente-client[mcp]' yente-mcp
-```
 
-The `--from` value names the PyPI package, `yente-client`, and its `mcp`
-extra. Other ways to run it:
-
-```bash
-# Install it on your PATH as a uv tool:
+# Or install it on your PATH:
 uv tool install 'yente-client[mcp]'
-yente-mcp
-
-# With pip, in a virtual environment:
 pip install 'yente-client[mcp]'
-yente-mcp
 ```
 
 The server speaks streamable HTTP and binds `127.0.0.1:8000` by default; the
