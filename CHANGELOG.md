@@ -8,8 +8,19 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`Client.with_api_key()` / `AsyncClient.with_api_key()`** — get a client
+  that sends a different API key over the same connections and ETag cache.
+  Use it to serve many API keys, such as one per caller, from one connection
+  pool.
+
 ### Changed
 
+- The MCP server sends all tool calls through one API client and one
+  connection pool, whatever key the caller sends. It no longer keeps a client
+  per API key. `yente_client.mcp.auth.client_for()` and `resolve_api_key()`
+  are removed.
 - **Clients no longer warn when built without an `api_key` against the hosted
   API.** The first call fails with `AuthenticationError` ("No API key
   provided."), which reports the same problem.
@@ -23,6 +34,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`yente-mcp` without the `mcp` extra prints the install hint** in place of
   a raw `ModuleNotFoundError: No module named 'mcp'`.
+- **MCP tools forward the caller's bearer token.** FastMCP leaves the
+  `Authorization` header out of `get_http_headers()` unless it is asked for by
+  name, so the tools always used the server's `OPENSANCTIONS_API_KEY` or no key.
 
 ## [0.2.0] - 2026-07-23
 

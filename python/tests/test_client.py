@@ -94,6 +94,23 @@ def test_caller_headers_merged_but_auth_wins() -> None:
         assert c._http.headers["Authorization"] == "ApiKey secret"
 
 
+def test_with_api_key_sends_its_key_over_shared_connections() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["Authorization"])
+        return httpx.Response(200, json={"status": "ok"})
+
+    with Client(
+        api_key="base", headers={"X-Custom": "value"}, transport=httpx.MockTransport(handler)
+    ) as base:
+        other = base.with_api_key("other")
+        assert other._http is base._http
+        other.healthz()
+        base.healthz()
+    assert seen == ["ApiKey other", "ApiKey base"]
+
+
 def test_caller_cannot_override_user_agent_via_headers() -> None:
     with Client(api_key="test", headers={"User-Agent": "fake-ua"}) as c:
         assert c.user_agent.startswith("yente-client/")
