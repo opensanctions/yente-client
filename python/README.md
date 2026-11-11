@@ -94,8 +94,7 @@ Person(notARealProp="X")  # ValidationError — extra="forbid"
 
 ## CLI
 
-The `yente-cli` binary mirrors the SDK
-(`uv tool install 'yente-client[cli]'`):
+The `yente-cli` binary mirrors the SDK:
 
 ```bash
 export OPENSANCTIONS_API_KEY=sk_...        # or pass --api-key

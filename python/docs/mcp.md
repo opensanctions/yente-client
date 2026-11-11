@@ -16,8 +16,11 @@ and CLI.
 ```bash
 export OPENSANCTIONS_API_KEY=...   # fallback key, handy for local runs
 uvx --from 'yente-client[mcp]' yente-mcp
+```
 
-# Or install it on your PATH:
+Other ways to run it:
+
+```bash
 uv tool install 'yente-client[mcp]'
 pip install 'yente-client[mcp]'
 ```

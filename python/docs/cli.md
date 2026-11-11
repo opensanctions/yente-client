@@ -16,8 +16,11 @@ use the SDK for embedded screening and long-running services.
 
 ```bash
 uvx --from 'yente-client[cli]' yente-cli --help
+```
 
-# Or install it on your PATH:
+Other ways to run it:
+
+```bash
 uv tool install 'yente-client[cli]'
 pip install 'yente-client[cli]'
 ```
