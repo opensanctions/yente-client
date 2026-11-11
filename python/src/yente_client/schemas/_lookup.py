@@ -1,19 +1,80 @@
 """Runtime access to the bundled FtM model snapshot.
 
-Loads ``schemas/model.json`` at import time and exposes it directly plus a
-handful of lookup helpers. No Pydantic-typed wrappers — the codegen reads
-``model.json`` directly and callers who want introspection get dict access.
+Loads ``schemas/model.json`` at import time and exposes it as a plain dict
+(:data:`model`, which the codegen also reads), plus typed, cached views of its
+schemata, properties and types (:class:`SchemaSpec`, :class:`PropertySpec`,
+:class:`TypeSpec`) that every lookup and projection here is built on.
 
 The on-disk file is the followthemoney release artifact verbatim:
 ``{schemata, types, version}`` at the top level.
 """
 
+import functools
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 model: dict[str, Any] = json.loads((Path(__file__).parent / "model.json").read_text())
+
+
+class PropertySpec(BaseModel):
+    """One property definition from the bundled model."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    label: str | None = None
+    type: str = "string"
+    range: str | None = Field(default=None, description="Target schema of an entity property.")
+    reverse: str | None = Field(
+        default=None, description="The property naming this edge from the far entity."
+    )
+    matchable: bool | None = Field(
+        default=None, description="Unset means: inherit the flag from the property's type."
+    )
+    hidden: bool = False
+    deprecated: bool = False
+    description: str | None = None
+    examples: list[str] = Field(default_factory=list)
+
+
+class SchemaSpec(BaseModel):
+    """One schema definition from the bundled model, with its own properties only."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    label: str | None = None
+    plural: str | None = None
+    description: str | None = None
+    matchable: bool = False
+    edge: bool = False
+    extends: list[str] = Field(default_factory=list)
+    featured: list[str] = Field(default_factory=list)
+    schemata: list[str] = Field(
+        default_factory=list, description="The schema and all its ancestors."
+    )
+    properties: dict[str, PropertySpec] = Field(default_factory=dict)
+
+    @field_validator("edge", mode="before")
+    @classmethod
+    def _is_edge(cls, value: Any) -> bool:
+        # The model carries an edge's rendering spec; only its presence matters here.
+        return value is not None and value is not False
+
+
+class TypeSpec(BaseModel):
+    """One property type definition from the bundled model."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    label: str | None = None
+    plural: str | None = None
+    description: str | None = None
+    matchable: bool = False
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 def has_schema(name: str) -> bool:
@@ -21,23 +82,62 @@ def has_schema(name: str) -> bool:
     return name in model["schemata"]
 
 
-def iter_properties(schema: str) -> Iterator[str]:
-    """Yield every property name available on ``schema``, including inherited ones.
+@functools.cache
+def schema_spec(name: str) -> SchemaSpec:
+    """Return the typed definition of one schema.
 
-    ``model.json`` stores own-properties only on each schema definition; this
-    walks the pre-flattened ``schemata`` ancestor list and yields each property
-    name at most once, even if multiple ancestors define a property of the same
-    name.
+    Raises:
+        KeyError: if ``name`` is not a schema in the bundled model.
     """
-    if not has_schema(schema):
-        raise KeyError(schema)
-    seen: set[str] = set()
-    for ancestor in model["schemata"][schema]["schemata"]:
-        ancestor_props = model["schemata"].get(ancestor, {}).get("properties", {})
-        for prop in ancestor_props:
-            if prop not in seen:
-                seen.add(prop)
-                yield prop
+    return SchemaSpec.model_validate(model["schemata"][name])
+
+
+@functools.cache
+def type_spec(name: str) -> TypeSpec:
+    """Return the typed definition of one property type (``country``, ``date``, …).
+
+    Raises:
+        KeyError: if ``name`` is not a type in the bundled model.
+    """
+    return TypeSpec.model_validate(model["types"][name])
+
+
+@functools.cache
+def property_specs(schema: str) -> Mapping[str, PropertySpec]:
+    """Return every property available on ``schema``, own and inherited.
+
+    Where several ancestors define the same name, the first in the model's
+    ``schemata`` list wins.
+
+    Raises:
+        KeyError: if ``schema`` is not a schema in the bundled model.
+    """
+    specs: dict[str, PropertySpec] = {}
+    for ancestor in schema_spec(schema).schemata:
+        for name, prop in schema_spec(ancestor).properties.items():
+            specs.setdefault(name, prop)
+    return MappingProxyType(specs)
+
+
+@functools.cache
+def all_property_specs() -> Mapping[str, PropertySpec]:
+    """Return one definition per property name across every schema.
+
+    For names met without a schema (a statement row's ``prop``). A few names
+    differ between schemata — ``authority`` is a string on Sanction but an
+    entity on Contract — so prefer :func:`property_specs` when the schema is
+    known. Schemata are scanned alphabetically; the first definition wins.
+    """
+    specs: dict[str, PropertySpec] = {}
+    for schema in sorted(model["schemata"]):
+        for name, prop in schema_spec(schema).properties.items():
+            specs.setdefault(name, prop)
+    return MappingProxyType(specs)
+
+
+def iter_properties(schema: str) -> Iterator[str]:
+    """Yield every property name available on ``schema``, including inherited ones."""
+    return iter(property_specs(schema))
 
 
 def is_matchable_schema(schema: str) -> bool:
@@ -48,9 +148,7 @@ def is_matchable_schema(schema: str) -> bool:
     construction; the SDK refuses such queries client-side rather than
     let the server reject them. See ``yente/data/entity.py:42``.
     """
-    if not has_schema(schema):
-        raise KeyError(schema)
-    return bool(model["schemata"][schema].get("matchable", False))
+    return schema_spec(schema).matchable
 
 
 def matchable_schemata() -> list[str]:
@@ -58,29 +156,20 @@ def matchable_schemata() -> list[str]:
 
     Sorted alphabetically for stable error messages.
     """
-    return sorted(n for n, d in model["schemata"].items() if d.get("matchable"))
+    return sorted(name for name in model["schemata"] if schema_spec(name).matchable)
 
 
 def is_a(schema: str, ancestor: str) -> bool:
     """Return True if ``schema`` extends ``ancestor`` transitively.
 
-    Reflexive on ``schema`` itself. O(1) lookup against the pre-flattened
-    ``schemata`` list — no MRO walk needed.
+    Reflexive on ``schema`` itself.
     """
-    if not has_schema(schema):
-        raise KeyError(schema)
-    return ancestor in model["schemata"][schema]["schemata"]
+    return ancestor in schema_spec(schema).schemata
 
 
 def is_deprecated(schema: str, prop: str) -> bool:
     """Return True if ``prop`` is marked ``deprecated`` on ``schema`` or any ancestor."""
-    if not has_schema(schema):
-        raise KeyError(schema)
-    for ancestor in model["schemata"][schema]["schemata"]:
-        props = model["schemata"].get(ancestor, {}).get("properties", {})
-        if prop in props:
-            return bool(props[prop].get("deprecated", False))
-    raise KeyError(prop)
+    return property_specs(schema)[prop].deprecated
 
 
 # --- canonical model projection (shared by the MCP and the CLI) ---
@@ -93,51 +182,33 @@ def is_deprecated(schema: str, prop: str) -> bool:
 # MCP can't drift.
 
 
-def _is_empty(value: Any) -> bool:
-    """True for the empty values we omit from a projection: None, "", [], {}."""
-    return value is None or value == "" or value == [] or value == {}
-
-
 def _compact(record: dict[str, Any]) -> dict[str, Any]:
     """Drop keys whose value is empty (None / "" / [] / {}); bools are kept."""
-    return {k: v for k, v in record.items() if not _is_empty(v)}
+    return {k: v for k, v in record.items() if v is not None and v != "" and v != [] and v != {}}
 
 
-def property_matchable(prop_def: dict[str, Any]) -> bool:
+def property_matchable(prop: PropertySpec) -> bool:
     """Resolve a property's matchable flag, falling back to its type's default.
 
     A property may not set ``matchable`` itself; when it doesn't, the value comes
     from its FtM type (e.g. the ``country`` type is matchable, so ``citizenship``
     inherits it). This is the FtM model's own resolution rule.
     """
-    matchable = prop_def.get("matchable")
-    if matchable is None:
-        matchable = model["types"].get(prop_def.get("type", ""), {}).get("matchable")
-    return bool(matchable)
+    if prop.matchable is not None:
+        return prop.matchable
+    return prop.type in model["types"] and type_spec(prop.type).matchable
 
 
-def _flatten_properties(schema: str) -> dict[str, dict[str, Any]]:
-    """Collect ``{name: definition}`` for a schema, own + inherited (first wins)."""
-    if not has_schema(schema):
-        raise KeyError(schema)
-    chosen: dict[str, dict[str, Any]] = {}
-    for ancestor in model["schemata"][schema]["schemata"]:
-        for pname, pdef in model["schemata"].get(ancestor, {}).get("properties", {}).items():
-            if pname not in chosen:
-                chosen[pname] = pdef
-    return chosen
-
-
-def _project_property(name: str, prop_def: dict[str, Any]) -> dict[str, Any]:
+def _project_property(name: str, prop: PropertySpec) -> dict[str, Any]:
     return _compact(
         {
             "name": name,
-            "label": prop_def.get("label"),
-            "type": prop_def.get("type"),
+            "label": prop.label,
+            "type": prop.type,
             # flag only emitted when true (false reads as absent)
-            "matchable": property_matchable(prop_def) or None,
-            "description": (prop_def.get("description") or "").strip(),
-            "examples": prop_def.get("examples"),
+            "matchable": property_matchable(prop) or None,
+            "description": (prop.description or "").strip(),
+            "examples": prop.examples,
         }
     )
 
@@ -149,11 +220,11 @@ def schema_properties(schema: str) -> list[dict[str, Any]]:
     countries, identifiers, …). Relationship edges (entity-typed properties)
     live in :func:`schema_relations`, not here.
     """
-    chosen = _flatten_properties(schema)
+    specs = property_specs(schema)
     return [
-        _project_property(name, chosen[name])
-        for name in sorted(chosen)
-        if chosen[name].get("type") != "entity"
+        _project_property(name, specs[name])
+        for name in sorted(specs)
+        if specs[name].type != "entity"
     ]
 
 
@@ -167,35 +238,26 @@ def schema_relations(schema: str) -> list[dict[str, Any]]:
     (``familyPerson``/``person`` vs ``familyRelative``/``relative``, both →
     ``Family``). Kept compact — no full property projection.
     """
-    chosen = _flatten_properties(schema)
+    specs = property_specs(schema)
     return [
-        _compact(
-            {
-                "name": name,
-                "range": chosen[name].get("range"),
-                "reverse": chosen[name].get("reverse"),
-            }
-        )
-        for name in sorted(chosen)
-        if chosen[name].get("type") == "entity"
+        _compact({"name": name, "range": specs[name].range, "reverse": specs[name].reverse})
+        for name in sorted(specs)
+        if specs[name].type == "entity"
     ]
 
 
 def schema_summary(schema: str) -> dict[str, Any]:
     """Project a schema header (no properties): name, description, matchable, lineage."""
-    if not has_schema(schema):
-        raise KeyError(schema)
-    defn = model["schemata"][schema]
+    spec = schema_spec(schema)
     return _compact(
         {
             "name": schema,
-            "description": (defn.get("description") or "").strip(),
+            "description": (spec.description or "").strip(),
             # flags only emitted when true (false reads as absent)
-            "matchable": bool(defn.get("matchable")) or None,
-            # `edge` is a rich dict in the model; reduce to "is this an edge?"
-            "edge": True if defn.get("edge") is not None else None,
-            "extends": list(defn.get("extends") or []),
-            "featured": list(defn.get("featured") or []),
+            "matchable": spec.matchable or None,
+            "edge": spec.edge or None,
+            "extends": spec.extends,
+            "featured": spec.featured,
         }
     )
 
@@ -230,9 +292,7 @@ def type_values(type_name: str) -> dict[str, str]:
     Raises:
         KeyError: if ``type_name`` is not a type in the bundled model.
     """
-    if type_name not in model["types"]:
-        raise KeyError(type_name)
-    return dict(model["types"][type_name].get("values", {}))
+    return dict(type_spec(type_name).values)
 
 
 def describe_type(type_name: str) -> dict[str, Any]:
@@ -245,15 +305,13 @@ def describe_type(type_name: str) -> dict[str, Any]:
     Raises:
         KeyError: if ``type_name`` is not a type in the bundled model.
     """
-    if type_name not in model["types"]:
-        raise KeyError(type_name)
-    defn = model["types"][type_name]
+    spec = type_spec(type_name)
     return _compact(
         {
             "name": type_name,
-            "label": defn.get("label"),
-            "description": (defn.get("description") or "").strip(),
-            "matchable": bool(defn.get("matchable")) or None,
-            "values": dict(defn.get("values") or {}),
+            "label": spec.label,
+            "description": (spec.description or "").strip(),
+            "matchable": spec.matchable or None,
+            "values": dict(spec.values),
         }
     )

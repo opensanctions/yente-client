@@ -59,12 +59,16 @@ from yente_client.models import (
     StatementsResponse,
     TotalSpec,
 )
-from yente_client.schemas import model
+from yente_client.schemas import (
+    PropertySpec,
+    all_property_specs,
+    model,
+    property_specs,
+    schema_spec,
+    type_spec,
+)
 
 Level = Literal["ref", "stub", "summary"]
-
-# A property's (label, type, range); range is the target schema of an entity-typed one.
-_PropDef = tuple[str | None, str | None, str | None]
 
 WEBSITE = "https://www.opensanctions.org"
 
@@ -404,16 +408,15 @@ class LegendCodes:
 
         Without a ``schema``, names resolve through the cross-schema map.
         """
-        defs = _defs_for(schema)
+        specs = _specs_for(schema)
         for name in names:
-            if name in defs:
-                self._add_property(name, defs[name])
+            if name in specs:
+                self._add_property(name, specs[name])
 
-    def _add_property(self, name: str, prop: _PropDef) -> None:
-        label, prop_type, range_ = prop
-        if label is None or name in self.properties:
+    def _add_property(self, name: str, prop: PropertySpec) -> None:
+        if prop.label is None or name in self.properties:
             return
-        rec = {"label": label, "type": prop_type, "range": range_}
+        rec = {"label": prop.label, "type": prop.type, "range": prop.range}
         self.properties[name] = {k: v for k, v in rec.items() if v is not None}
 
 
@@ -459,7 +462,7 @@ def build_legend(
     }
     for type_name in sorted(values):
         if type_name in _enum_types():
-            section = _resolve(values[type_name], _type_vocabulary(type_name))
+            section = _resolve(values[type_name], type_spec(type_name).values)
             sections[_enum_types()[type_name]] = section
     sections["datasets"] = {n: dict(datasets[n]) for n in sorted(codes.datasets) if n in datasets}
     sections["programs"] = program_entries
@@ -621,12 +624,9 @@ def _prose_names(schema: str) -> tuple[str, ...]:
         return ()
     return tuple(
         sorted(
-            {
-                name
-                for ancestor in model["schemata"][schema]["schemata"]
-                for name, prop in model["schemata"].get(ancestor, {}).get("properties", {}).items()
-                if prop.get("type") in _PROSE_TYPES and not prop.get("hidden")
-            }
+            name
+            for name, prop in property_specs(schema).items()
+            if prop.type in _PROSE_TYPES and not prop.hidden
         )
     )
 
@@ -637,11 +637,11 @@ def _featured_names(schema: str) -> tuple[str, ...]:
     if not schemas.has_schema(schema):
         return ()
     allowed = _property_names(schema, "summary")
-    defs = _schema_property_defs(schema)
+    specs = property_specs(schema)
     return tuple(
         name
-        for name in model["schemata"][schema].get("featured") or ()
-        if name in allowed and defs[name][1] != "entity"
+        for name in schema_spec(schema).featured
+        if name in allowed and specs[name].type != "entity"
     )
 
 
@@ -655,10 +655,7 @@ def _property_names(schema: str, level: Level) -> frozenset[str]:
         return frozenset()
     excluded = _BULK_TYPES | {"topic"}
     return frozenset(
-        name
-        for ancestor in model["schemata"][schema]["schemata"]
-        for name, prop in model["schemata"].get(ancestor, {}).get("properties", {}).items()
-        if prop.get("type") not in excluded
+        name for name, prop in property_specs(schema).items() if prop.type not in excluded
     )
 
 
@@ -668,7 +665,7 @@ def _topic_labels(entity: Entity) -> dict[str, str]:
     A code missing from the bundled vocabulary (model drift) falls back to
     itself rather than being dropped — a raw code is still signal.
     """
-    vocab = _type_vocabulary("topic")
+    vocab = type_spec("topic").values
     return {
         code: vocab.get(code, code)
         for code in entity.properties.get("topics", [])
@@ -717,11 +714,12 @@ def _walk(obj: Any, codes: LegendCodes) -> None:
     if isinstance(schema, str):
         codes.schemata.add(schema)
         codes.datasets.update(d for d in obj.get("datasets", ()) if isinstance(d, str))
-        defs = _defs_for(schema)
+        specs = _specs_for(schema)
         props = obj.get("properties")
         for name, values in props.items() if isinstance(props, dict) else ():
             strings = [v for v in values if isinstance(v, str)]
-            _collect_values(name, defs.get(name) or _property_defs().get(name), strings, codes)
+            spec = specs.get(name) or all_property_specs().get(name)
+            _collect_values(name, spec, strings, codes)
         # A profile's relation keys, prose counts and a candidate's `not_shown`
         # name properties of this entity.
         relation_keys = [p for p in PROFILE_SECTIONS if p in obj]
@@ -740,67 +738,36 @@ def _walk(obj: Any, codes: LegendCodes) -> None:
             codes.add_values("language", [obj["lang"]])
         if isinstance(obj.get("prop"), str):
             values = [obj["value"]] if isinstance(obj.get("value"), str) else []
-            _collect_values(obj["prop"], _property_defs().get(obj["prop"]), values, codes)
+            _collect_values(obj["prop"], all_property_specs().get(obj["prop"]), values, codes)
     for value in obj.values():
         _walk(value, codes)
 
 
 def _collect_values(
-    prop: str, prop_def: _PropDef | None, values: list[str], codes: LegendCodes
+    prop: str, spec: PropertySpec | None, values: list[str], codes: LegendCodes
 ) -> None:
-    if prop_def is None:
+    if spec is None:
         return
-    codes._add_property(prop, prop_def)
-    prop_type = prop_def[1]
-    if prop_type in _enum_types():
-        codes.add_values(prop_type, values)
+    codes._add_property(prop, spec)
+    if spec.type in _enum_types():
+        codes.add_values(spec.type, values)
     elif prop == "programId":
         codes.programs.update(values)
 
 
-def _defs_for(schema: str | None) -> dict[str, _PropDef]:
-    """Property definitions for ``schema``, or the cross-schema map without one."""
+def _specs_for(schema: str | None) -> Mapping[str, PropertySpec]:
+    """Property specs for ``schema``, or the cross-schema map without one."""
     if schema is not None and schemas.has_schema(schema):
-        return _schema_property_defs(schema)
-    return _property_defs()
-
-
-def _prop_def(prop: Mapping[str, Any]) -> _PropDef:
-    return (prop.get("label"), prop.get("type"), prop.get("range"))
-
-
-@functools.cache
-def _schema_property_defs(schema: str) -> dict[str, _PropDef]:
-    """Property name → definition for ``schema``, own and inherited."""
-    defs: dict[str, _PropDef] = {}
-    for ancestor in model["schemata"][schema]["schemata"]:
-        for name, prop in model["schemata"].get(ancestor, {}).get("properties", {}).items():
-            defs.setdefault(name, _prop_def(prop))
-    return defs
-
-
-@functools.cache
-def _property_defs() -> dict[str, _PropDef]:
-    """Property name → definition across every schema; first definition wins.
-
-    Only for names with no schema context (statement rows, description
-    entries, a single relation page). A few names differ between schemata —
-    `authority` is a string on Sanction but an entity on Contract — so anything
-    with a schema uses :func:`_schema_property_defs` instead.
-    """
-    defs: dict[str, _PropDef] = {}
-    for schema in sorted(model["schemata"]):
-        for name, prop in model["schemata"][schema].get("properties", {}).items():
-            defs.setdefault(name, _prop_def(prop))
-    return defs
+        return property_specs(schema)
+    return all_property_specs()
 
 
 def _schema_record(schema: str) -> dict[str, Any]:
-    spec = model["schemata"][schema]
+    spec = schema_spec(schema)
     rec = {
-        "label": spec.get("label"),
-        "plural": spec.get("plural"),
-        "ancestors": sorted(set(spec.get("schemata", ())) - {schema}),
+        "label": spec.label,
+        "plural": spec.plural,
+        "ancestors": sorted(set(spec.schemata) - {schema}),
     }
     return {k: v for k, v in rec.items() if v}
 
@@ -811,21 +778,16 @@ def _enum_types() -> dict[str, str]:
 
     Topics are left out: their labels sit inline on each entity.
     """
+    specs = {name: type_spec(name) for name in model["types"]}
     return {
-        name: str(spec.get("plural") or name).lower()
-        for name, spec in model["types"].items()
-        if spec.get("values") and name != "topic"
+        name: (spec.plural or name).lower()
+        for name, spec in specs.items()
+        if spec.values and name != "topic"
     }
 
 
 def _timestamp(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
-
-
-@functools.cache
-def _type_vocabulary(type_name: str) -> dict[str, str]:
-    """Cached ``value → label`` map for an FtM enum type."""
-    return schemas.type_values(type_name)
 
 
 def _resolve(codes: set[str], labels: Mapping[str, str]) -> dict[str, str]:
