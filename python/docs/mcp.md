@@ -13,10 +13,6 @@ and CLI.
 
 ## Install and run
 
-The recommended way to run `yente-mcp` is with
-[uv](https://docs.astral.sh/uv/). `uvx` runs it in a cached, isolated
-environment, with no install step:
-
 ```bash
 export OPENSANCTIONS_API_KEY=...   # fallback key, handy for local runs
 uvx --from 'yente-client[mcp]' yente-mcp

@@ -14,10 +14,6 @@ use the SDK for embedded screening and long-running services.
 
 ## Install
 
-The recommended way to run `yente-cli` is with
-[uv](https://docs.astral.sh/uv/). `uvx` runs it in a cached, isolated
-environment, with no install step:
-
 ```bash
 uvx --from 'yente-client[cli]' yente-cli --help
 ```
