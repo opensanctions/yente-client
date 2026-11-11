@@ -5,16 +5,10 @@ Pure functions over the SDK response models — no network, no FastMCP.
 
 from datetime import datetime
 
+from yente_client.mcp.legend import build_legend, collect_codes
 from yente_client.mcp.shaping import (
-    LegendCodes,
-    build_legend,
-    collect_codes,
-    dataset_records,
-    feature_descriptions,
-    freshness,
     page_entries,
     page_info,
-    program_records,
     shape,
     shape_adjacency,
     shape_profile,
@@ -28,12 +22,8 @@ from yente_client.mcp.shaping import (
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
-    AlgorithmsResponse,
-    DatasetsResponse,
     Entity,
     FeatureResult,
-    Program,
-    ProgramIssuer,
     ScoredEntity,
     Statement,
     StatementsResponse,
@@ -505,150 +495,6 @@ def test_shape_statements_projects_provenance_rows() -> None:
     assert "origin" not in second  # unset for plain crawled data
 
 
-def test_legend_gathers_codes_across_the_response() -> None:
-    asset = Entity(id="c1", caption="ACME", schema="Company", properties={"jurisdiction": ["cy"]})
-    edge = _sanction("s1", programId=["US-RUSHAR"], country=["us"])
-    edge.datasets = ["us_ofac_sdn"]
-    entity = Entity(
-        id="P1",
-        caption="Jane",
-        schema="Person",
-        properties={"nationality": ["ru"], "registrationNumber": ["ru"]},
-        datasets=["eu_fsf"],
-    )
-    adjacency = AdjacentResponse(
-        entity=entity,
-        adjacent={
-            "sanctions": _page([edge], total=1),
-            "ownershipOwner": _page(
-                [
-                    Entity(
-                        id="o1",
-                        caption="Ownership",
-                        schema="Ownership",
-                        properties={"asset": [asset]},
-                    )
-                ],
-                total=1,
-            ),
-        },
-    )
-    codes = collect_codes(shape_profile(entity, adjacency))
-    # a country-looking registration number stays out; a ref carries no properties
-    assert codes.values["country"] == {"ru", "us"}
-    assert codes.datasets == {"eu_fsf", "us_ofac_sdn"}
-    assert codes.programs == {"US-RUSHAR"}
-    assert {"nationality", "programId", "asset"} <= codes.properties.keys()
-    assert {"Person", "Sanction", "Ownership", "Company"} <= codes.schemata
-    # relation keys of the profile resolve against the entity's own schema
-    assert codes.properties["sanctions"]["range"] == "Sanction"
-    assert codes.properties["ownershipOwner"]["type"] == "entity"
-    # a property's range alone doesn't put its schema in the legend
-    assert "Asset" not in codes.schemata
-
-
-def test_legend_labels_properties_by_their_own_schema() -> None:
-    # `authority` is a string on Sanction but an entity on Contract.
-    edge = shape(_sanction("s1", authority=["Council"]), source_id="P1")
-    assert edge["properties"] == {"authority": ["Council"]}
-    labels = build_legend(collect_codes(edge), datasets={}, programs={})["properties"]
-    assert labels["authority"] == {"label": "Authority", "type": "string"}
-
-
-def test_legend_reads_statement_rows() -> None:
-    rows = {
-        "results": [
-            {"prop": "nationality", "value": "ru", "dataset": "eu_fsf"},
-            {"prop": "programId", "value": "EU-UKR", "dataset": "eu_fsf"},
-            {"prop": "name", "value": "Иван", "dataset": "eu_fsf", "lang": "rus"},
-        ]
-    }
-    codes = collect_codes(rows)
-    assert codes.values["country"] == {"ru"}
-    assert codes.values["language"] == {"rus"}
-    assert codes.programs == {"EU-UKR"}
-    assert codes.datasets == {"eu_fsf"}
-
-
-def test_build_legend_resolves_and_omits_empty_sections() -> None:
-    codes = collect_codes(
-        {
-            "schema": "Person",
-            "properties": {"birthDate": ["1970"], "nationality": ["ru"]},
-            "datasets": ["x"],
-        }
-    )
-    legend = build_legend(codes, datasets={"x": {"title": "Dataset X"}}, programs={})
-    assert legend["countries"] == {"ru": type_values("country")["ru"]}
-    assert legend["datasets"] == {"x": {"title": "Dataset X"}}
-    assert legend["properties"]["birthDate"]["type"] == "date"
-    assert "programs" not in legend
-    assert "freshness" not in legend and "links" not in legend
-    # failure-soft: missing records degrade to a thinner legend
-    assert "datasets" not in build_legend(codes, datasets={}, programs={})
-
-
-def test_legend_describes_schemata_with_ancestors() -> None:
-    codes = collect_codes({"schema": "Person", "properties": {}})
-    person = build_legend(codes, datasets={}, programs={})["schemata"]["Person"]
-    assert person["label"] == "Person"
-    assert {"LegalEntity", "Thing"} <= set(person["ancestors"])
-    assert "Person" not in person["ancestors"]
-
-
-def test_legend_names_value_sections_by_type_plural() -> None:
-    codes = collect_codes(
-        {"schema": "Person", "properties": {"gender": ["male"], "nationality": ["ru"]}}
-    )
-    legend = build_legend(codes, datasets={}, programs={})
-    assert legend["genders"] == {"male": type_values("gender")["male"]}
-    assert "ru" in legend["countries"]
-    # topics resolve inline on the entity, never in the legend
-    assert "topics" not in legend
-
-
-def test_legend_resolves_features_present_in_explanations() -> None:
-    candidate = ScoredEntity(
-        id="Q1",
-        caption="Jane",
-        schema="Person",
-        properties={},
-        score=0.9,
-        match=True,
-        explanations={"name_match": FeatureResult(score=0.9)},
-    )
-    codes = collect_codes({"results": [shape_scored(candidate)]})
-    assert codes.features == {"name_match"}
-    features = {"name_match": "Compares names", "dob_year_disjoint": "Birth years differ"}
-    legend = build_legend(codes, datasets={}, programs={}, features=features)
-    assert legend["features"] == {"name_match": "Compares names"}
-
-
-def test_legend_carries_links() -> None:
-    legend = build_legend(
-        LegendCodes(), datasets={}, programs={}, links={"entity": "https://example.org/{id}"}
-    )
-    assert legend == {"links": {"entity": "https://example.org/{id}"}}
-
-
-def test_legend_programs_add_their_territory() -> None:
-    codes = collect_codes({"prop": "programId", "value": "US-RUSHAR"})
-    programs = program_records(
-        [
-            Program(
-                key="US-RUSHAR", title="Russia", issuer=ProgramIssuer(name="OFAC", territory="us")
-            )
-        ]
-    )
-    legend = build_legend(codes, datasets={}, programs=programs)
-    assert legend["programs"]["US-RUSHAR"] == {
-        "title": "Russia",
-        "issuer": "OFAC",
-        "territory": "us",
-    }
-    assert "us" in legend["countries"]
-
-
 def test_shape_profile_counts_prose_left_out() -> None:
     entity = Entity(
         id="P1", caption="Jane", schema="Person", properties={"notes": ["a", "b"], "summary": ["c"]}
@@ -756,33 +602,6 @@ def test_page_entries_respects_budget_and_marks_the_end() -> None:
     assert (last["returned"], last["next_offset"]) == (1, None)
     huge = page_entries([{"prop": "notes", "text": "x" * 1000, "sources": []}], 0, budget=10)
     assert huge["returned"] == 1  # an oversized entry still fills a page
-
-
-def test_dataset_records_mark_officialness_without_urls(load_fixture) -> None:
-    catalog = DatasetsResponse.model_validate(load_fixture("catalog"))
-    records = dataset_records(catalog)
-    assert records["us_ofac_sdn"] == {
-        "title": "US OFAC Specially Designated Nationals",
-        "publisher": "Office of Foreign Assets Control",
-        "official": True,
-    }
-    assert "official" not in records["sanctions"]  # a collection has no publisher
-
-
-def test_freshness_reports_the_default_collection(load_fixture) -> None:
-    catalog = DatasetsResponse.model_validate(load_fixture("catalog"))
-    fresh = freshness(catalog)
-    assert fresh is not None
-    assert fresh["version"] == catalog.datasets[0].index_version
-    assert fresh["updated_at"].startswith("2026-05-30")
-    assert freshness(DatasetsResponse(datasets=[])) is None
-
-
-def test_feature_descriptions_follow_the_default_alias(load_fixture) -> None:
-    resp = AlgorithmsResponse.model_validate(load_fixture("algorithms"))
-    features = feature_descriptions(resp)
-    assert features["name_match"].startswith("Match two entities")
-    assert "dob_year_disjoint" in features
 
 
 def test_unknown_name_suggests_entries_containing_the_query() -> None:

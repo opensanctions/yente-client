@@ -45,7 +45,7 @@ from yente_client._http import is_opensanctions_url
 from yente_client.async_client import AsyncClient
 from yente_client.entities import EntityInput, entity_class
 from yente_client.exceptions import YenteError
-from yente_client.mcp import shaping
+from yente_client.mcp import legend, shaping
 from yente_client.mcp._deps import (
     CallNext,
     FastMCP,
@@ -238,7 +238,7 @@ def _tool_errors() -> Iterator[None]:
 
 
 async def _with_legend(
-    out: dict[str, Any], client: AsyncClient, codes: shaping.LegendCodes | None = None
+    out: dict[str, Any], client: AsyncClient, codes: legend.LegendCodes | None = None
 ) -> dict[str, Any]:
     """Attach the response's ``legend`` for every code it mentions, and return it.
 
@@ -249,22 +249,22 @@ async def _with_legend(
     gets no legend at all, not one holding only link templates.
     """
     if codes is None:
-        codes = shaping.collect_codes(out)
+        codes = legend.collect_codes(out)
     catalog = await _soft(_catalog, client.datasets)
     programs = algorithms = None
     if codes.programs:
         programs = await _soft(_programs, client.programs)
     if codes.features:
         algorithms = await _soft(_algorithms, client.algorithms)
-    legend = shaping.build_legend(
+    resolved = legend.build_legend(
         codes,
-        datasets=shaping.dataset_records(catalog) if catalog else {},
-        programs=shaping.program_records(programs.data) if programs else {},
-        features=shaping.feature_descriptions(algorithms) if algorithms else {},
+        datasets=legend.dataset_records(catalog) if catalog else {},
+        programs=legend.program_records(programs.data) if programs else {},
+        features=legend.feature_descriptions(algorithms) if algorithms else {},
         links=_LINKS,
     )
-    if legend.keys() - {"links"}:
-        out["legend"] = legend
+    if resolved.keys() - {"links"}:
+        out["legend"] = resolved
     return out
 
 
@@ -350,7 +350,7 @@ async def match_entity(
         if not resp.results and cutoff is None:
             near_misses = await screen(cutoff=0.0, limit=_NEAR_MISS_LIMIT)
     catalog = await _soft(_catalog, client.datasets)
-    freshness = (shaping.freshness(catalog) if catalog else None) or {}
+    freshness = (legend.freshness(catalog) if catalog else None) or {}
     checked = {
         "dataset": dataset,
         "topics": topics,
@@ -369,7 +369,7 @@ async def match_entity(
     if near_misses is not None and near_misses.results:
         out["near_misses"] = [shaping.shape_scored(r) for r in near_misses.results]
     # `checked` echoes the caller's own scope, which needs no glossing.
-    codes = shaping.collect_codes({k: v for k, v in out.items() if k != "checked"})
+    codes = legend.collect_codes({k: v for k, v in out.items() if k != "checked"})
     return await _with_legend(out, client, codes)
 
 
@@ -529,7 +529,7 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
         elif isinstance(resp, YenteError):
             out["relations_unavailable"] = describe_error(resp)
     catalog = await _soft(_catalog, client.datasets)
-    records = shaping.dataset_records(catalog) if catalog else {}
+    records = legend.dataset_records(catalog) if catalog else {}
     unofficial = {name for name, rec in records.items() if rec.get("official") is False}
     entries = shaping.text_entries(entity, statements, designations, unofficial)
     out.update(shaping.page_entries(entries, offset, _TEXT_PAGE_CHARS))
@@ -571,14 +571,14 @@ async def fetch_entity_relations(
                 entity_id, limit=_cap(limit) or _OVERVIEW_EDGES, offset=offset
             )
             out = shaping.shape_adjacency(overview)
-            codes = shaping.collect_codes(out)
+            codes = legend.collect_codes(out)
             codes.add_properties(overview.entity.schema_, out)
         else:
             block = await client.adjacent(
                 entity_id, prop=prop, limit=_cap(limit) or _MAX_LIMIT, offset=offset
             )
             out = shaping.shape_relation_page(block, entity_id, prop)
-            codes = shaping.collect_codes(out)
+            codes = legend.collect_codes(out)
             codes.add_properties(None, [prop])
     return await _with_legend(out, client, codes)
 
@@ -687,7 +687,7 @@ async def _describe_dataset(name: str) -> dict[str, Any]:
     for dataset in resp.datasets:
         if dataset.name == name:
             out = dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
-            codes = shaping.collect_codes(out)
+            codes = legend.collect_codes(out)
             if dataset.coverage is not None:
                 codes.add_values("country", dataset.coverage.countries)
             if dataset.publisher is not None:
@@ -705,7 +705,7 @@ async def _describe_program(key: str) -> dict[str, Any]:
     for program in catalog:
         if program.key == key or key in program.aliases:
             out = program.model_dump(mode="json", exclude_none=True)
-            codes = shaping.collect_codes(out)
+            codes = legend.collect_codes(out)
             territory = program.issuer.territory if program.issuer else None
             codes.add_values("country", [territory, *program.target_territories])
             if program.dataset:
