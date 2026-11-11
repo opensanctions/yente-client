@@ -251,10 +251,10 @@ warrants a `CHANGELOG.md` line.
 
 ## Releasing
 
-- Version is bumped with **`bump2version`** (config at `.bumpversion.cfg`,
-  pinned to `1.0.1`). Run from the repo root:
+- Version is bumped with **`bump-my-version`** (config under
+  `[tool.bumpversion]` in `python/pyproject.toml`). Run from `python/`:
 
-      bump2version --verbose minor   # or patch / major
+      bump-my-version bump minor   # or patch / major
 
   This edits `python/pyproject.toml`, commits, and tags `vX.Y.Z`.
 - Pushing the tag triggers `.github/workflows/release.yml`: full matrix

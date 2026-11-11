@@ -54,10 +54,9 @@ dev = [
     # Docs build (`make docs`): mkdocs + Material theme + mkdocstrings extracts
     # docstrings inline at build time; no separate regeneration step needed.
     "yente-client[docs]",
-    # Version bumper. Mirrors the toolchain in ../yente (and pinned to the
-    # same release for cross-repo muscle memory). Run from the repo root:
-    #     bump2version --verbose minor   # or patch / major
-    "bump2version == 1.0.1",
+    # Version bumper, configured under [tool.bumpversion]. Run from python/:
+    #     bump-my-version bump minor   # or patch / major
+    "bump-my-version",
 ]
 docs = [
     "mkdocs>=1.6",
@@ -106,3 +105,14 @@ asyncio_mode = "auto"
 markers = [
     "live: requires a live yente API (env: OPENSANCTIONS_API_KEY); skip by default with -m 'not live'",
 ]
+
+[tool.bumpversion]
+current_version = "0.2.0"
+commit = true
+tag = true
+tag_name = "v{new_version}"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'

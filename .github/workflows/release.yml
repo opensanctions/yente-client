@@ -1,7 +1,7 @@
 name: release
 
 # Triggered by a version tag (vX.Y.Z) pushed to the repo. The expected
-# producer is `bump2version --verbose <part>` from the repo root, which
+# producer is `bump-my-version bump <part>` from python/, which
 # bumps python/pyproject.toml, commits, and tags atomically.
 #
 # Required setup (one-time, on PyPI side):
@@ -45,7 +45,7 @@ jobs:
         # Reads `version = "X.Y.Z"` out of python/pyproject.toml and compares
         # against the tag (stripping the `v` prefix). Refuses to continue on
         # any mismatch — protects against hand-crafted tags going past the
-        # bump2version path.
+        # bump-my-version path.
         run: |
           set -euo pipefail
           tag_version="${GITHUB_REF_NAME#v}"
