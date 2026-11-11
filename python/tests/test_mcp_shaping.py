@@ -157,7 +157,8 @@ def test_shape_stub_is_identity_topics_and_featured_properties() -> None:
         "caption": "ACME",
         "schema": "Company",
         "topics": {"sanction": type_values("topic")["sanction"]},
-        "properties": {"name": ["ACME"], "jurisdiction": ["cy"]},
+        "properties": {"jurisdiction": ["cy"]},  # name only repeats the caption
+        "abridged": True,
     }
 
 
@@ -236,9 +237,12 @@ def test_shape_scored_caps_positives_but_keeps_every_negative() -> None:
     assert list(explanation) == ["pen2", "b", "d", "c", "pen1"]
 
 
-def test_shape_relation_edge_stubs_counterparty_with_topics() -> None:
+def test_shape_relation_edge_refs_counterparty_with_topics() -> None:
     asset = Entity(
-        id="c1", caption="ACME Ltd", schema="Company", properties={"topics": ["sanction"]}
+        id="c1",
+        caption="ACME Ltd",
+        schema="Company",
+        properties={"topics": ["sanction"], "jurisdiction": ["cy"]},
     )
     edge = Entity(
         id="own1",
@@ -248,10 +252,11 @@ def test_shape_relation_edge_stubs_counterparty_with_topics() -> None:
         properties={"owner": ["P1"], "asset": [asset], "percentage": ["100"]},
         first_seen=datetime(2026, 10, 13),
     )
-    out = shape_relation_page(_page([edge, "unresolved-id"], total=2), "P1")
+    out = shape_relation_page(_page([edge, "unresolved-id"], total=2), "P1", "ownershipOwner")
     rec = out["results"][0]
     assert rec["datasets"] == ["ext_ru_egrul"]
-    assert rec["first_seen"] == "2026-10-13"
+    assert rec["caption"] == "Ownership"
+    assert "first_seen" not in rec  # dates only on the top-level record
     assert "owner" not in rec["properties"]
     assert rec["properties"]["percentage"] == ["100"]
     assert rec["properties"]["asset"] == [
@@ -260,9 +265,64 @@ def test_shape_relation_edge_stubs_counterparty_with_topics() -> None:
             "caption": "ACME Ltd",
             "schema": "Company",
             "topics": {"sanction": type_values("topic")["sanction"]},
+            "abridged": True,
         }
     ]
+    assert "abridged" not in rec  # the edge itself is shown in full
     assert out["results"][1] == {"id": "unresolved-id"}
+
+
+def test_shape_relation_page_keeps_position_post_stubs() -> None:
+    post = Entity(
+        id="pos1",
+        caption="Member of the State Duma",
+        schema="Position",
+        properties={"name": ["Member of the State Duma"], "country": ["ru"]},
+    )
+    occupancy = Entity(
+        id="occ1",
+        caption="Occupancy",
+        schema="Occupancy",
+        properties={"holder": ["P1"], "post": [post], "startDate": ["2016"]},
+        first_seen=datetime(2024, 1, 1),
+    )
+    out = shape_relation_page(_page([occupancy], total=1), "P1", "positionOccupancies")
+    row = out["results"][0]
+    assert row["properties"]["post"][0]["properties"] == {"country": ["ru"]}
+    assert row["properties"]["startDate"] == ["2016"]
+    assert "first_seen" not in row
+
+
+def test_shape_relation_page_drops_designation_captions() -> None:
+    sanction = _sanction("s1", program=["Reciprocal"], authority=["OFAC"])
+    sanction.caption = "Reciprocal"
+    sanction.first_seen = datetime(2024, 1, 1)
+    row = shape_relation_page(_page([sanction], total=1), "P1", "sanctions")["results"][0]
+    assert "caption" not in row
+    assert "first_seen" not in row
+    assert row["properties"] == {"program": ["Reciprocal"], "authority": ["OFAC"]}
+
+
+def test_only_refs_and_stubs_are_marked_abridged() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person", properties={"name": ["Jane"]})
+    assert shape(entity, "ref")["abridged"] is True
+    assert shape(entity, "stub")["abridged"] is True
+    assert "abridged" not in shape(entity)
+
+
+def test_top_level_records_keep_their_dates() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person", first_seen=datetime(2022, 3, 1))
+    profile = shape_profile(entity, AdjacentResponse(entity=entity, adjacent={}))
+    assert profile["first_seen"] == "2022-03-01"
+    scored = ScoredEntity(
+        id="Q1",
+        caption="x",
+        schema="Person",
+        score=0.9,
+        match=True,
+        first_seen=datetime(2023, 1, 1),
+    )
+    assert shape_scored(scored)["first_seen"] == "2023-01-01"
 
 
 def test_page_info_marks_truncation() -> None:
@@ -457,8 +517,8 @@ def test_legend_gathers_codes_across_the_response() -> None:
         },
     )
     codes = collect_codes(shape_profile(entity, adjacency))
-    # a country-looking registration number stays out; nested counterparties count
-    assert codes.values["country"] == {"ru", "us", "cy"}
+    # a country-looking registration number stays out; a ref carries no properties
+    assert codes.values["country"] == {"ru", "us"}
     assert codes.datasets == {"eu_fsf", "us_ofac_sdn"}
     assert codes.programs == {"US-RUSHAR"}
     assert {"nationality", "programId", "asset"} <= codes.properties.keys()

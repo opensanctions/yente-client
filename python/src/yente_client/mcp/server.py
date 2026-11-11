@@ -407,12 +407,15 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
     - `positionOccupancies`: positions held, with country, dates and status.
 
     `relations` summarizes every other relationship type (ownership,
-    directorships, family, associates, …): its total and first few edges, each
-    counterparty with its topics. Page one type in full with
-    fetch_entity_relations. Prose is left out: `descriptions` counts the notes
-    and designation reasons that fetch_entity_descriptions returns.
-    `first_seen` / `last_change` say when a record entered the data and last
-    changed.
+    directorships, family, associates, …): its total and first few edges. Each
+    edge keeps its own details (role, share, relationship, dates); the entity
+    at its far end is just {id, caption, schema, topics}, marked `abridged`:
+    a missing field there is not shown, not unknown — call
+    fetch_entity_by_id on that `id` for its record. Page one type in full
+    with fetch_entity_relations. Prose is left out: `descriptions` counts the
+    notes and designation reasons that fetch_entity_descriptions returns. The
+    record's `first_seen` / `last_change` say when it entered the data and
+    last changed.
 
     If `relations_unavailable` is set, sanctions and relations could not be
     read — say so rather than calling the entity unlisted. A returned `id`
@@ -521,7 +524,9 @@ async def fetch_entity_relations(
     of a profile's `relations`, or `sanctions` / `risks` /
     `positionOccupancies`. For a company, "ownershipOwner" lists what it owns
     and "ownershipAsset" who owns it. Each edge carries its own properties
-    (role, share, dates) and the counterparty with its topics. Page with
+    (role, share, dates); the entity at its far end is {id, caption, schema,
+    topics}, marked `abridged` — call fetch_entity_by_id on its `id` for its
+    record. Page with
     `limit` (default and maximum 25) / `offset` until `next_offset` is null;
     when you stop early, say how many exist. With no `prop`, returns every
     type with its total and first few edges.
@@ -545,7 +550,7 @@ async def fetch_entity_relations(
             block = await client.adjacent(
                 entity_id, prop=prop, limit=_cap(limit) or _MAX_LIMIT, offset=offset
             )
-            out = shaping.shape_relation_page(block, entity_id)
+            out = shaping.shape_relation_page(block, entity_id, prop)
             codes = shaping.collect_codes(out)
             codes.add_properties(None, [prop])
     except YenteError as exc:

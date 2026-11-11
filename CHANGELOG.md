@@ -13,7 +13,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MCP server output reshaped around what an analyst needs to judge a hit.**
   `fetch_entity_by_id` now returns a profile: the entity's record, its
   sanctions, risk listings and positions held in full, and a summary of each
-  other relationship type, with `full=True` for the raw record. If the
+  other relationship type, with `full=True` for the raw record. Relationship
+  edges keep their own details, but the entity at the far end is reduced to
+  `{id, caption, schema, topics}` marked `abridged: true`, and only top-level
+  records carry
+  `first_seen` / `last_change`. If the
   relationships can't be read, the record still comes back, flagged with
   `relations_unavailable`. Prose (biography notes, sanction and risk
   reasons) moves to the new `fetch_entity_descriptions` tool, which credits

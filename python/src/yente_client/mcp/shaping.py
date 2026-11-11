@@ -2,13 +2,21 @@
 
 yente entities are large — every property, referents, nested provenance.
 Handing that raw to a model buries the signal, so every tool projects entities
-through one function, :func:`shape`, at one of two levels:
+through one function, :func:`shape`, at one of three levels:
 
-- ``stub``: identity, topics and the schema's FtM ``featured`` properties.
-  Relation counterparties, so a sanctioned neighbour — or the country of a
-  position held — is visible without fetching it.
-- ``summary``: stub plus datasets, dates and every short-valued property.
-  Match and search results, relation edges, and the record in a profile.
+- ``ref``: identity plus topics. The far end of a relationship (an owner, a
+  relative), so a sanctioned neighbour is visible; its record is one
+  ``fetch_entity_by_id`` call away.
+- ``stub``: ref plus the schema's FtM ``featured`` properties. The post of a
+  position held, which is part of the position rather than a neighbour, and
+  the designating record of a description.
+- ``summary``: stub plus datasets and every short-valued property. Match and
+  search results, relation edges, and the record in a profile. Only a
+  top-level record carries ``first_seen`` / ``last_change``; on edges the
+  dates are noise.
+
+``ref`` and ``stub`` carry ``abridged: true``, so a missing field reads as
+"not shown" rather than "not known".
 
 Prose — properties of the FtM ``text`` type, such as ``notes`` or a sanction's
 ``reason`` — never appears in these views. It is large, and it needs per-value
@@ -51,7 +59,7 @@ from yente_client.models import (
 )
 from yente_client.schemas import model
 
-Level = Literal["stub", "summary"]
+Level = Literal["ref", "stub", "summary"]
 
 # A property's (label, type, range); range is the target schema of an entity-typed one.
 _PropDef = tuple[str | None, str | None, str | None]
@@ -90,13 +98,19 @@ DESIGNATION_SECTIONS: tuple[str, ...] = ("sanctions", "risks")
 
 
 def shape(
-    entity: Entity, level: Level = "summary", *, source_id: str | None = None
+    entity: Entity,
+    level: Level = "summary",
+    *,
+    source_id: str | None = None,
+    nested: Level = "stub",
 ) -> dict[str, Any]:
     """Project an entity at the given level.
 
     Args:
         source_id: The entity this one was reached from, when it is a relation
-            edge. Its back-reference to the source is dropped as redundant.
+            edge. Its back-reference to the source is dropped as redundant, and
+            so are its dates.
+        nested: The level for entities nested in this one's properties.
     """
     shaped: dict[str, Any] = {
         "id": entity.id,
@@ -106,18 +120,23 @@ def shape(
     topics = _topic_labels(entity)
     if topics:
         shaped["topics"] = topics
+    if level == "ref":
+        shaped["abridged"] = True
+        return shaped
     if level == "stub":
         props = _stub_properties(entity)
         if props:
             shaped["properties"] = props
+        shaped["abridged"] = True
         return shaped
     if entity.datasets:
         shaped["datasets"] = entity.datasets
-    shaped["properties"] = _properties(entity, level, source_id)
-    for key in ("first_seen", "last_change"):
-        value = _date(getattr(entity, key))
-        if value is not None:
-            shaped[key] = value
+    shaped["properties"] = _properties(entity, source_id, nested)
+    if source_id is None:
+        for key in ("first_seen", "last_change"):
+            value = _date(getattr(entity, key))
+            if value is not None:
+                shaped[key] = value
     return shaped
 
 
@@ -157,7 +176,7 @@ def shape_profile(
     for prop in PROFILE_SECTIONS:
         first_page = relations.pop(prop, None)
         if prop in full_pages:
-            profile[prop] = shape_relation_page(full_pages[prop], entity.id)
+            profile[prop] = shape_relation_page(full_pages[prop], entity.id, prop)
         elif first_page is not None:
             profile[prop] = first_page
     if relations:
@@ -193,11 +212,26 @@ def page_info(total: TotalSpec, offset: int, returned: int) -> dict[str, Any]:
     }
 
 
-def shape_relation_page(block: AdjacentPropertyResponse, source_id: str) -> dict[str, Any]:
-    """Shape one edge type's page: paging envelope plus edges with counterparty stubs."""
-    results = [
-        shape(e, source_id=source_id) if isinstance(e, Entity) else {"id": e} for e in block.results
-    ]
+def shape_relation_page(
+    block: AdjacentPropertyResponse, source_id: str, prop: str
+) -> dict[str, Any]:
+    """Shape one edge type's page: paging envelope plus edges.
+
+    The far end of an ordinary relationship is a ``ref``; in a profile section
+    (:data:`PROFILE_SECTIONS`) it is a ``stub``, since a position's post is
+    part of the position held. Designation rows drop their caption, which
+    repeats the program.
+    """
+    nested: Level = "stub" if prop in PROFILE_SECTIONS else "ref"
+    results: list[dict[str, Any]] = []
+    for edge in block.results:
+        if not isinstance(edge, Entity):
+            results.append({"id": edge})
+            continue
+        row = shape(edge, source_id=source_id, nested=nested)
+        if prop in DESIGNATION_SECTIONS:
+            row.pop("caption")
+        results.append(row)
     return {**page_info(block.total, block.offset, len(results)), "results": results}
 
 
@@ -205,7 +239,7 @@ def shape_adjacency(resp: AdjacentResponse) -> dict[str, Any]:
     """Shape the all-edge-types overview: edge type → paged edges."""
     source_id = resp.entity.id
     return {
-        prop: shape_relation_page(block, source_id)
+        prop: shape_relation_page(block, source_id, prop)
         for prop, block in resp.adjacent.items()
         if prop not in HIDDEN_RELATION_PROPS
     }
@@ -499,9 +533,9 @@ def unknown_name(kind: str, name: str, titles: Mapping[str, str | None]) -> str:
     return f"Unknown {kind} {name!r}. Closest: {listed}."
 
 
-def _properties(entity: Entity, level: Level, source_id: str | None) -> dict[str, list[Any]]:
-    """Pick the entity's properties for ``level``; nested entities become stubs."""
-    allowed = _property_names(entity.schema_, level)
+def _properties(entity: Entity, source_id: str | None, nested: Level) -> dict[str, list[Any]]:
+    """Pick the entity's summary properties; nested entities are shaped at ``nested``."""
+    allowed = _property_names(entity.schema_, "summary")
     out: dict[str, list[Any]] = {}
     for name, values in entity.properties.items():
         if name not in allowed:
@@ -509,7 +543,7 @@ def _properties(entity: Entity, level: Level, source_id: str | None) -> dict[str
         kept: list[Any] = []
         for value in values:
             if isinstance(value, Entity):
-                kept.append(shape(value, "stub"))
+                kept.append(shape(value, nested))
             elif value != source_id:
                 kept.append(value)
         if kept:
@@ -518,10 +552,15 @@ def _properties(entity: Entity, level: Level, source_id: str | None) -> dict[str
 
 
 def _stub_properties(entity: Entity) -> dict[str, list[str]]:
-    """Pick the entity's featured, non-entity properties as plain strings."""
+    """Pick the entity's featured, non-entity properties as plain strings.
+
+    A ``name`` that only repeats the caption is left out.
+    """
     out: dict[str, list[str]] = {}
     for name in _featured_names(entity.schema_):
         values = [v for v in entity.properties.get(name, []) if isinstance(v, str)]
+        if name == "name" and values == [entity.caption]:
+            continue
         if values:
             out[name] = values
     return out

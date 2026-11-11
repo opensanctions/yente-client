@@ -108,9 +108,12 @@ Every response follows the same shape:
   data was last updated.
 - **Lists** carry `total`, `returned` and `next_offset`. A `next_offset` of
   `null` means the list is complete.
-- **Entities and relationship edges** carry `first_seen` and `last_change`
-  dates, and each counterparty in an edge carries its risk topics and key
-  properties, such as the country of a position held.
+- **Relationship edges keep their own details** (role, share, relationship,
+  dates). The entity at the far end is a reference: `{id, caption, schema,
+  topics}` marked `abridged: true`, enough to spot a sanctioned neighbour. Profiling that `id` gives
+  its record. A position's post is part of the position held, so it keeps
+  key properties such as its country. Only top-level records carry
+  `first_seen` and `last_change`.
 - **Prose has its own tool.** Biography notes and designation reasons are
   left out of every other response; the profile counts them under
   `descriptions`, and `fetch_entity_descriptions` returns them with
