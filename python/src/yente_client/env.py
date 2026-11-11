@@ -50,18 +50,6 @@ DEFAULT_MCP_INSTRUCTIONS = (
 )
 """MCP server instructions advertised when ``$YENTE_MCP_INSTRUCTIONS`` is unset."""
 
-HOSTED_HOSTS = (
-    "api.opensanctions.org",
-    "api.opensanctions.net",
-    "api.opensanctions.com",
-    "api.test.opensanctions.org",
-    "api.test.opensanctions.net",
-    "api.test.opensanctions.com",
-)
-"""Hostnames of the hosted OpenSanctions API, across every TLD we might serve
-from. Used to decide whether a client built without an ``api_key`` warrants a
-warning; a self-hosted yente is not in this set and stays quiet."""
-
 
 def api_key() -> str | None:
     """Return ``$OPENSANCTIONS_API_KEY``, or ``None`` if unset."""
