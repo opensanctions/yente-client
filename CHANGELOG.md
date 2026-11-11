@@ -10,6 +10,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Clients no longer warn when built without an `api_key` against the hosted
+  API.** The first call fails with `AuthenticationError` ("No API key
+  provided."), which reports the same problem.
 - **The `mcp` extra needs `fastmcp>=4.0`** (MCP SDK 2.x). The server uses
   the SDK 2.x field names for tool annotations and icons.
 - **The missing-extra hints for `yente-cli` and `yente-mcp` show the `uvx`

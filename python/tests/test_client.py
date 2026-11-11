@@ -84,25 +84,6 @@ def test_api_key_sets_authorization_header() -> None:
         assert c._http.headers["Authorization"] == "ApiKey secret-key"
 
 
-def test_missing_api_key_warns_on_opensanctions_url() -> None:
-    with pytest.warns(UserWarning, match="api_key"):
-        Client().close()
-
-
-def test_missing_api_key_warns_on_opensanctions_test_url() -> None:
-    with pytest.warns(UserWarning, match="api_key"):
-        Client(base_url="https://api.test.opensanctions.org").close()
-
-
-def test_missing_api_key_does_not_warn_on_yente_instance() -> None:
-    import warnings as _warnings
-
-    with _warnings.catch_warnings():
-        _warnings.simplefilter("error")
-        # No warning expected — `error` mode would raise if one fired.
-        Client(base_url="http://yente.internal:8000").close()
-
-
 def test_caller_headers_merged_but_auth_wins() -> None:
     with Client(
         api_key="secret",
