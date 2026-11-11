@@ -253,8 +253,8 @@ warrants a `CHANGELOG.md` line.
 
 ## Releasing
 
-- Version is bumped with **`bump-my-version`** (config under
-  `[tool.bumpversion]` in `python/pyproject.toml`). Run from `python/`:
+- Version is bumped with **`bump-my-version`** (config at
+  `.bumpversion.toml`). Run from the repo root:
 
       bump-my-version bump minor   # or patch / major
 

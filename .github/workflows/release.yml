@@ -1,7 +1,7 @@
 name: release
 
 # Triggered by a version tag (vX.Y.Z) pushed to the repo. The expected
-# producer is `bump-my-version bump <part>` from python/, which
+# producer is `bump-my-version bump <part>` from the repo root, which
 # bumps python/pyproject.toml, commits, and tags atomically.
 #
 # Required setup (one-time, on PyPI side):
