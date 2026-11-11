@@ -14,8 +14,17 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that sends a different API key over the same connections and ETag cache.
   Use it to serve many API keys, such as one per caller, from one connection
   pool.
+- **OAuth2 login for `yente-mcp`.** With `YENTE_MCP_OAUTH_ISSUER` and
+  `YENTE_MCP_PUBLIC_URL` set, the server serves the protected resource
+  metadata, accepts only valid access tokens from the issuer, forwards them to
+  the API, and answers all other requests with `401`.
+- `py.typed` marker, which the `Typing :: Typed` classifier promises. Without
+  it, mypy in downstream projects skips `yente_client`.
 
 ### Changed
+
+- **The `yente-mcp` HTTP transport is stateless**, so more than one instance
+  can serve it behind a load balancer.
 
 - The MCP server sends all tool calls through one API client and one
   connection pool, whatever key the caller sends. It no longer keeps a client

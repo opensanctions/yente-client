@@ -38,7 +38,12 @@ environment variable:
 | `--host` | `YENTE_MCP_HOST` | `127.0.0.1` | Bind host for the HTTP transport. |
 | `--port` | `YENTE_MCP_PORT` | `8000` | Bind port for the HTTP transport. |
 | — | `YENTE_BASE_URL` | `https://api.opensanctions.org` | The yente / OpenSanctions API the server forwards calls to. |
-| — | `OPENSANCTIONS_API_KEY` | unset | Fallback key when a request carries no bearer token. |
+| — | `OPENSANCTIONS_API_KEY` | unset | Fallback key when a request carries no bearer token. Not used with OAuth2. |
+| — | `YENTE_MCP_OAUTH_ISSUER` | unset | OAuth2 issuer whose access tokens the server accepts. See [OAuth2 login](#oauth2-login). |
+| — | `YENTE_MCP_PUBLIC_URL` | unset | Public root URL of the server, e.g. `https://mcp.example.com`. Needed with `YENTE_MCP_OAUTH_ISSUER`. |
+
+The HTTP transport is stateless, so any instance behind a load balancer can
+answer any request.
 
 ## Authentication
 
@@ -48,6 +53,33 @@ forwards it downstream — validation, quota, and billing happen at the API
 gateway, and the caller screens as themselves. A request without a bearer
 token falls back to the server's `OPENSANCTIONS_API_KEY`; against an open
 self-hosted yente, no key is needed at all.
+
+### OAuth2 login
+
+MCP clients that support OAuth2 can log in with an OAuth2 issuer, for example
+Ory. Set `YENTE_MCP_OAUTH_ISSUER` and
+`YENTE_MCP_PUBLIC_URL` to run the server as an OAuth2 resource server. The
+server then:
+
+- serves the protected resource metadata (RFC 9728) at
+  `/.well-known/oauth-protected-resource/mcp`. It names the issuer, and its
+  `resource` is `$YENTE_MCP_PUBLIC_URL/mcp`;
+- checks access tokens (JWTs) itself: signature (from the issuer's
+  `/.well-known/jwks.json`), issuer, expiry and audience. The audience must be
+  `$YENTE_MCP_PUBLIC_URL/mcp`, which MCP clients request as the RFC 8707
+  `resource`;
+- answers any other request, an API key included, with `401` and a `WWW-Authenticate` header that points at the metadata. The
+  client then logs in or refreshes its token.
+
+The tools forward the access token to the API. The server never uses
+`OPENSANCTIONS_API_KEY` in this mode. The issuer must put
+`$YENTE_MCP_PUBLIC_URL/mcp` into the access token's `aud`, and the API must
+accept the access tokens. To use an API key instead, run `yente-mcp` yourself
+without OAuth2.
+
+This token pass-through is a deliberate difference from the MCP specification.
+It is safe only when the MCP server and the API have the same operator and the
+same issuer.
 
 ## Connecting a client
 
@@ -59,7 +91,8 @@ claude mcp add --transport http yente http://127.0.0.1:8000/mcp \
 ```
 
 Any MCP client that supports streamable HTTP connects the same way: point it
-at the `/mcp` endpoint and set the bearer header.
+at the `/mcp` endpoint and set the bearer header. Against a server with
+OAuth2 login, leave out the header, and the client asks you to log in.
 
 For a local, single-user setup, the client can start the server itself over
 stdio. In that mode no bearer header exists, so the server uses
