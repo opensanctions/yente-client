@@ -70,20 +70,6 @@ claude mcp add yente --env OPENSANCTIONS_API_KEY=$OPENSANCTIONS_API_KEY \
     -- uvx --from 'yente-client[mcp]' yente-mcp --transport stdio
 ```
 
-Clients that take a JSON server configuration use the same command:
-
-```json
-{
-  "mcpServers": {
-    "yente": {
-      "command": "uvx",
-      "args": ["--from", "yente-client[mcp]", "yente-mcp", "--transport", "stdio"],
-      "env": {"OPENSANCTIONS_API_KEY": "..."}
-    }
-  }
-}
-```
-
 ## Tools
 
 Screening and investigation:
