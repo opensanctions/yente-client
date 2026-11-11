@@ -40,6 +40,21 @@ environment variable:
 | — | `YENTE_BASE_URL` | `https://api.opensanctions.org` | The yente / OpenSanctions API the server forwards calls to. |
 | — | `OPENSANCTIONS_API_KEY` | unset | Fallback key when a request carries no bearer token. |
 
+## Docker
+
+Each release publishes a container image to
+`ghcr.io/opensanctions/yente-mcp`, tagged with the version and `latest`:
+
+```bash
+docker run --rm -p 8080:8080 -e OPENSANCTIONS_API_KEY=... \
+    ghcr.io/opensanctions/yente-mcp
+```
+
+The image binds `0.0.0.0`. The port follows the `PORT` environment variable
+and defaults to `8080`, which is what Cloud Run and similar platforms expect.
+`YENTE_MCP_PORT` has no effect in the image. Set the other configuration
+with the environment variables above.
+
 ## Authentication
 
 The server holds no secret of its own. Each MCP request carries the caller's

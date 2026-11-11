@@ -14,6 +14,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that sends a different API key over the same connections and ETag cache.
   Use it to serve many API keys, such as one per caller, from one connection
   pool.
+- **Container image for `yente-mcp`** at `ghcr.io/opensanctions/yente-mcp`,
+  published on each release. The server listens on `0.0.0.0` and on the port
+  in `$PORT` (default `8080`).
 
 ### Changed
 

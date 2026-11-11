@@ -1,0 +1,9 @@
+# The image installs only the Python package, so only its sources go into
+# the build context.
+*
+!python/pyproject.toml
+!python/README.md
+!python/LICENSE
+!python/src/
+**/__pycache__/
+**/*.py[cod]
