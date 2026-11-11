@@ -1,0 +1,44 @@
+# Git hooks and CI lint suite, run with prek. Install the hooks with
+# `prek install`; CI runs `prek run --all-files`. Dependabot bumps the revs.
+repos:
+  # prek's Rust built-ins: no hook repo to fetch and no Python env to build.
+  # Dependabot skips this entry because it has no rev.
+  - repo: builtin
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+
+  # An unpinned ruff breaks CI whenever a release changes the formatter
+  # output. regen_model.py also formats generated code with this hook's ruff.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^python/
+      - id: ruff-format
+        files: ^python/
+
+  # mypy and the drift check import the package and its extras, so they run in
+  # the developer's venv instead of an isolated hook environment.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy --strict
+        entry: mypy --config-file python/pyproject.toml python/src/yente_client
+        language: system
+        files: ^python/(src/|pyproject\.toml$)
+        types_or: [python, toml]
+        pass_filenames: false
+      - id: regen-model-check
+        name: regen_model.py --check
+        entry: python scripts/regen_model.py --check --skip-fetch
+        language: system
+        files: ^(scripts/|model/|python/src/yente_client/(entities|schemas)/)
+        pass_filenames: false

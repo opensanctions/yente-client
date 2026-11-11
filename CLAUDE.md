@@ -204,8 +204,9 @@ spend effort on the public surface.
   `yente-cli status` as the bundled-model identifier.
 - Determinism rules: schemas alphabetical, properties alphabetical, JSON
   written with `sort_keys=True`, compact separators, trailing newline.
-- CI runs `regen_model.py --check --skip-fetch` to detect drift between the
-  templates and the committed generated files.
+- The `regen-model-check` prek hook runs `regen_model.py --check --skip-fetch`
+  in CI to detect drift between the templates and the committed generated
+  files.
 - **Never hand-edit generated files.** Update the template, run regen, commit.
 
 ### Upgrading the bundled FtM model
@@ -220,7 +221,7 @@ make regen-model
 
 # 2. Confirm the new bundled version, then verify nothing drifted / broke.
 python scripts/regen_model.py --check --skip-fetch   # or: make regen-model-check
-cd python && ruff check . && ruff format --check . && mypy && pytest -m "not live"
+prek run --all-files && (cd python && pytest -m "not live")
 
 # 3. Eyeball the diff — model upgrades are usually additive (new schemas,
 #    properties, topic/gender values). Removals are breaking; flag them.
@@ -278,6 +279,13 @@ warrants a `CHANGELOG.md` line.
   `uv pip install --python python/.venv/bin/python -e python[dev]`.
 - Make targets: `setup`, `regen-model`, `regen-model-check`, `test`, `lint`,
   `docs`, `docs-serve`, `docs-check`. CI runs the underlying commands directly.
+- Lint hooks live in `.pre-commit-config.yaml` and run with **prek** (ruff,
+  `mypy --strict`, the regen drift check, whitespace and syntax checks). Run
+  `prek install` once to get them as a git pre-commit hook. CI runs
+  `prek run --all-files`. `make lint` wraps the same call.
+- The `ruff-pre-commit` rev is the only ruff pin. `regen_model.py` runs ruff
+  through `prek exec ruff-format`, so generated code uses the same version.
+  Dependabot bumps the hook revs.
 - `.env` at repo root (gitignored) carries `OPENSANCTIONS_API_KEY` and
   `YENTE_BASE_URL`. Conftest loads it for local convenience.
 - Don't commit secrets. Don't push without explicit user direction (per the

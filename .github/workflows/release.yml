@@ -81,24 +81,12 @@ jobs:
       - name: Install package + dev dependencies
         run: pip install -e python/.[dev]
 
-      - name: ruff check
-        working-directory: python
-        run: ruff check .
-
-      - name: ruff format --check
-        working-directory: python
-        run: ruff format --check .
-
-      - name: mypy --strict
-        working-directory: python
-        run: mypy
+      - name: Run prek hooks
+        run: prek run --all-files --show-diff-on-failure
 
       - name: pytest (offline)
         working-directory: python
         run: pytest -m "not live"
-
-      - name: regen_model.py --check
-        run: python scripts/regen_model.py --check --skip-fetch
 
       - name: mkdocs build --strict
         working-directory: python
