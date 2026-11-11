@@ -62,8 +62,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   datasets, marked `abridged: true`; match candidates add the match evidence.
   `not_shown` names the properties the full record adds, including `name`
   when there are aliases beyond the caption; `fetch_entity_by_id` returns
-  them. `search_entities` and `fetch_entity_relations` page 10 results by
-  default, at most 25.
+  them. `search_entities`, `fetch_entity_relations` and
+  `fetch_entity_statements` page 10 results by default, at most 25.
 - **MCP `describe_*` tools merged into `describe(kind, name)`.** `kind` is
   one of `schema`, `topics`, `countries`, `dataset` or `program`.
 - **MCP tool results are sent as text only.** Tools declare no output

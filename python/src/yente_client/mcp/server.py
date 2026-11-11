@@ -79,22 +79,26 @@ _READ_ONLY = ToolAnnotations(
     readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
 )
 
-# Page sizes. A profile shows a few edges per relationship type so hub entities
-# stay readable; the relations overview a few more; paging search results or one
-# relation type, a default page. Profile sections read a full page at once.
+# Page sizes a caller sees. Every list a tool pages through (search results,
+# one relation type, statements) defaults to _PAGE_SIZE and is capped at
+# _MAX_PAGE_SIZE: a page of 100 ownership edges (~105k characters) overflows MCP
+# clients' tool-output caps, while paging is free. A profile shows a few edges
+# per relationship type so hub entities stay readable, the overview of every
+# type a few more. Tool docstrings state the default and the cap; a test keeps
+# them in step with these values.
+_PAGE_SIZE = 10
+_MAX_PAGE_SIZE = 25
 _PROFILE_EDGES = 3
 _OVERVIEW_EDGES = 5
-_DEFAULT_PAGE = 10
-_PAGE_EDGES = 50
-# Ceiling on any caller-chosen `limit`: a page of 100 ownership edges (~105k
-# characters) overflows MCP clients' tool-output caps, while paging is free.
-_MAX_LIMIT = 25
-# Character budget for one page of fetch_entity_descriptions, and how many
-# statements to read per prose property (Gazprom, a heavy case, has ~65 notes).
-_TEXT_PAGE_CHARS = 15_000
-_STATEMENT_LIMIT = 1000
 # Candidates returned below cutoff when a screen comes back empty.
 _NEAR_MISS_LIMIT = 3
+
+# Read sizes no caller sees. Profile sections and designation records are read
+# in one go, statements per prose property likewise (Gazprom, a heavy case, has
+# ~65 notes); descriptions are then paged by a character budget.
+_SECTION_READ = 50
+_STATEMENT_READ = 1000
+_TEXT_PAGE_CHARS = 15_000
 
 # Every code in an entity-bearing result resolves in the response itself:
 # schema, property and value labels come from the bundled model (see shaping),
@@ -270,9 +274,9 @@ async def _with_legend(
     return out
 
 
-def _cap(limit: int | None) -> int | None:
-    """Clamp a caller's page size to :data:`_MAX_LIMIT`; ``None`` keeps the default."""
-    return None if limit is None else max(1, min(limit, _MAX_LIMIT))
+def _cap(limit: int) -> int:
+    """Clamp a caller's page size to between 1 and :data:`_MAX_PAGE_SIZE`."""
+    return max(1, min(limit, _MAX_PAGE_SIZE))
 
 
 def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
@@ -347,7 +351,7 @@ async def match_entity(
         client.match, entity, threshold=threshold, datasets=[dataset], topics=topics
     )
     with _tool_errors():
-        resp = await screen(cutoff=cutoff, limit=_cap(limit))
+        resp = await screen(cutoff=cutoff, limit=None if limit is None else _cap(limit))
         near_misses = None
         if not resp.results and cutoff is None:
             near_misses = await screen(cutoff=0.0, limit=_NEAR_MISS_LIMIT)
@@ -383,7 +387,7 @@ async def search_entities(
     schema: str | None = None,
     countries: list[str] | None = None,
     topics: list[str] | None = None,
-    limit: int = _DEFAULT_PAGE,
+    limit: int = _PAGE_SIZE,
     offset: int = 0,
     fuzzy: bool = False,
     simple: bool = False,
@@ -470,7 +474,7 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
             and page.total.value > len(page.results)
         ]
         pages = await asyncio.gather(
-            *(client.adjacent(entity.id, prop=prop, limit=_PAGE_EDGES) for prop in truncated)
+            *(client.adjacent(entity.id, prop=prop, limit=_SECTION_READ) for prop in truncated)
         )
     except YenteError as exc:
         profile = shaping.shape(entity)
@@ -507,10 +511,10 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     text_props = shaping.text_property_names(entity.schema_)
     edge_props = shaping.designation_props(entity.schema_)
     statement_calls = [
-        client.statements(canonical_id=entity.id, prop=prop, limit=_STATEMENT_LIMIT)
+        client.statements(canonical_id=entity.id, prop=prop, limit=_STATEMENT_READ)
         for prop in text_props
     ]
-    edge_calls = [client.adjacent(entity.id, prop=p, limit=_PAGE_EDGES) for p in edge_props]
+    edge_calls = [client.adjacent(entity.id, prop=p, limit=_SECTION_READ) for p in edge_props]
     results = await asyncio.gather(*statement_calls, *edge_calls, return_exceptions=True)
     for result in results:
         if isinstance(result, BaseException) and not isinstance(result, YenteError):
@@ -546,6 +550,8 @@ async def fetch_entity_relations(
     entity_id: str,
     *,
     prop: str | None = None,
+    # None, not _PAGE_SIZE: without `prop` the limit is per type, defaulting
+    # to the overview's _OVERVIEW_EDGES.
     limit: int | None = None,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -573,14 +579,17 @@ async def fetch_entity_relations(
     with _tool_errors():
         if prop is None:
             overview = await client.adjacent(
-                entity_id, limit=_cap(limit) or _OVERVIEW_EDGES, offset=offset
+                entity_id, limit=_cap(_OVERVIEW_EDGES if limit is None else limit), offset=offset
             )
             out = shaping.shape_adjacency(overview)
             codes = legend.collect_codes(out)
             codes.add_properties(overview.entity.schema_, out)
         else:
             block = await client.adjacent(
-                entity_id, prop=prop, limit=_cap(limit) or _DEFAULT_PAGE, offset=offset
+                entity_id,
+                prop=prop,
+                limit=_cap(_PAGE_SIZE if limit is None else limit),
+                offset=offset,
             )
             out = shaping.shape_relation_page(block, entity_id, prop)
             codes = legend.collect_codes(out)
@@ -595,7 +604,7 @@ async def fetch_entity_statements(
     prop: str | None = None,
     dataset: str | None = None,
     sort: list[str] | None = None,
-    limit: int = _MAX_LIMIT,
+    limit: int = _PAGE_SIZE,
     offset: int = 0,
 ) -> dict[str, Any]:
     """Trace which source asserted each value of an entity, and when.
@@ -610,7 +619,7 @@ async def fetch_entity_statements(
     OpenSanctions API only; a self-hosted yente errors here.
 
     Args:
-        limit: Statements per page, at most 25.
+        limit: Statements per page (default 10), at most 25.
     """
     client = _resolve_client()
     with _tool_errors():

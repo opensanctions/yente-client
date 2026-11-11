@@ -107,8 +107,8 @@ Every response follows the same shape:
   echoes the dataset and topics that were screened, and `as_of`, when the
   data was last updated.
 - **Lists** carry `total`, `returned` and `next_offset`. A `next_offset` of
-  `null` means the list is complete. Search results and one relation type
-  page 10 at a time by default, at most 25.
+  `null` means the list is complete. Search results, one relation type and
+  statements page 10 at a time by default, at most 25.
 - **Entities to look up next are abridged.** Match candidates, search
   results and the entity at the far end of a relationship carry their
   identifying properties (such as birth date, nationality, jurisdiction or

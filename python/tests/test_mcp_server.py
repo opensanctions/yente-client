@@ -165,3 +165,15 @@ async def test_search_and_relation_pages_default_to_ten(
     await _call("search_entities", {"q": "Zacharov"})
     await _call("fetch_entity_relations", {"entity_id": "Q1", "prop": "familyPerson"})
     assert limits == {"search": "10", "entities": "10"}
+
+
+async def test_tool_descriptions_state_the_page_sizes() -> None:
+    # FastMCP moves a docstring's Args section into the parameter schema.
+    tools = {
+        tool.name: (tool.description or "") + json.dumps(tool.parameters)
+        for tool in await server.mcp.list_tools()
+    }
+    for name in ("search_entities", "fetch_entity_relations", "fetch_entity_statements"):
+        assert f"default {server._PAGE_SIZE}" in tools[name], name
+        assert f"at most {server._MAX_PAGE_SIZE}" in tools[name], name
+    assert f"at most {server._MAX_PAGE_SIZE}" in tools["match_entity"]
