@@ -14,12 +14,39 @@ use the SDK for embedded screening and long-running services.
 
 ## Install
 
+The recommended way to run `yente-cli` is with
+[uv](https://docs.astral.sh/uv/). `uvx` runs it in a cached, isolated
+environment, with no install step:
+
 ```bash
-pip install yente-client[cli]
+uvx --from 'yente-client[cli]' yente-cli --help
+```
+
+The `--from` value names the PyPI package, `yente-client`, and its `cli`
+extra. `uvx yente-cli` on its own does not work: no PyPI package has that
+name.
+
+To put `yente-cli` on your `PATH` permanently, install it as a uv tool:
+
+```bash
+uv tool install 'yente-client[cli]'
+yente-cli --help
+```
+
+Other ways to run it:
+
+```bash
+# Inside a uv project, or with a throwaway environment:
+uv run --with 'yente-client[cli]' yente-cli --help
+
+# With pip, in a virtual environment:
+pip install 'yente-client[cli]'
 ```
 
 The `[cli]` extra pulls in `typer` and `rich`. Without it, `yente-cli`
-emits a one-line install hint and exits.
+emits a one-line install hint and exits. The examples on this page use the
+short `yente-cli` form; prefix them with `uvx --from 'yente-client[cli]'`
+if you did not install the tool.
 
 Authenticate by exporting your API key (the same one the SDK uses):
 

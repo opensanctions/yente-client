@@ -13,9 +13,25 @@ and CLI.
 
 ## Install and run
 
+The recommended way to run `yente-mcp` is with
+[uv](https://docs.astral.sh/uv/). `uvx` runs it in a cached, isolated
+environment, with no install step:
+
 ```bash
-pip install 'yente-client[mcp]'
 export OPENSANCTIONS_API_KEY=...   # fallback key, handy for local runs
+uvx --from 'yente-client[mcp]' yente-mcp
+```
+
+The `--from` value names the PyPI package, `yente-client`, and its `mcp`
+extra. Other ways to run it:
+
+```bash
+# Install it on your PATH as a uv tool:
+uv tool install 'yente-client[mcp]'
+yente-mcp
+
+# With pip, in a virtual environment:
+pip install 'yente-client[mcp]'
 yente-mcp
 ```
 
@@ -51,6 +67,29 @@ claude mcp add --transport http yente http://127.0.0.1:8000/mcp \
 
 Any MCP client that supports streamable HTTP connects the same way: point it
 at the `/mcp` endpoint and set the bearer header.
+
+For a local, single-user setup, the client can start the server itself over
+stdio. In that mode no bearer header exists, so the server uses
+`OPENSANCTIONS_API_KEY` from its environment:
+
+```bash
+claude mcp add yente --env OPENSANCTIONS_API_KEY=$OPENSANCTIONS_API_KEY \
+    -- uvx --from 'yente-client[mcp]' yente-mcp --transport stdio
+```
+
+Clients that take a JSON server configuration use the same command:
+
+```json
+{
+  "mcpServers": {
+    "yente": {
+      "command": "uvx",
+      "args": ["--from", "yente-client[mcp]", "yente-mcp", "--transport", "stdio"],
+      "env": {"OPENSANCTIONS_API_KEY": "..."}
+    }
+  }
+}
+```
 
 ## Tools
 
