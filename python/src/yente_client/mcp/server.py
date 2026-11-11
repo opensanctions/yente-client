@@ -9,11 +9,14 @@ Five adapters over :class:`yente_client.AsyncClient` (``match_entity``,
 the record and its relations — ``fetch_entity_relations``,
 ``fetch_entity_statements``) plus a set of ``describe_*`` lookup tools:
 ``describe_schema``, ``describe_topics`` and ``describe_countries`` over the
-bundled FtM model, ``describe_dataset`` over the live catalog, and
-``describe_program`` over the public program-catalog artifact. Every
+bundled FtM model, and ``describe_dataset`` / ``describe_program`` for one
+catalog record by name — the catalogs are too large to list whole. Every
 entity-bearing result resolves its own codes — topic labels inline, everything
 else through one ``legend`` per response (see :mod:`~yente_client.mcp.shaping`)
-— so an agent never has to gloss a raw identifier. The ``ftm://schema`` resources mirror
+— so an agent never has to gloss a raw identifier. The server instructions
+(:data:`yente_client.env.DEFAULT_MCP_INSTRUCTIONS`) carry the data model and
+the rules shared by every tool; tool docstrings cover only their own tool.
+The ``ftm://schema`` resources mirror
 ``describe_schema`` for resource-capable clients; anything the model must
 dereference mid-conversation is a tool, not a resource, since clients don't
 reliably read resources. Matching algorithms are deliberately not exposed:
@@ -78,7 +81,7 @@ _NEAR_MISS_LIMIT = 3
 # the data are not — so there is no note nudging the agent, just the labels.
 #
 # 15 minutes bounds how long a newly added dataset or sanctions program stays
-# unresolvable, and how stale the reported `freshness` can be; the catalogs
+# unresolvable, and how stale a screen's reported `as_of` can be; the catalogs
 # change on slower cadences than that. Refreshes
 # are cheap: programs.json revalidates via ETag (a 304 round-trip), and the
 # catalog is a small response (see opensanctions/yente#1202 for giving it an
@@ -215,7 +218,8 @@ async def _with_legend(
     ``codes`` replaces the walk of ``out`` when the caller knows codes the walk
     can't see (relation keys, a describe record's countries). Program and
     feature lookups are live (cached), failure-soft, and only run when the
-    response carries a code they resolve.
+    response carries a code they resolve. A response with nothing to resolve
+    gets no legend at all, not one holding only link templates.
     """
     if codes is None:
         codes = shaping.collect_codes(out)
@@ -227,10 +231,9 @@ async def _with_legend(
         datasets=info.datasets,
         programs=programs,
         features=features,
-        freshness=info.freshness,
         links=_LINKS,
     )
-    if legend:
+    if legend.keys() - {"links"}:
         out["legend"] = legend
     return out
 
@@ -239,9 +242,7 @@ def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
     """Construct a typed input entity from a schema name + property bag."""
     schema_cls = getattr(entities, schema, None)
     if not isinstance(schema_cls, type):
-        raise ToolError(
-            f"Unknown FtM schema {schema!r}. Call describe_schema() for matchable schemata."
-        )
+        raise ToolError(f"Unknown FtM schema {schema!r}. Call describe_schema() for the list.")
     try:
         entity: EntityInput = schema_cls(**properties)
     except ValidationError as exc:
@@ -263,28 +264,30 @@ async def match_entity(
     topics: list[str] | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    """Screen one entity against sanctions/PEP/watchlist data; return scored candidates.
+    """Screen one person, company, vessel or other entity; return scored candidates.
 
-    Query-by-example: describe the entity in as much detail as you can and the
-    API returns ranked candidates. Use for ANY matching task, even with partial
-    data. `schema` is an FtM type (Person, Company, ...) and `properties` maps
-    FtM property names to value lists ({"name": ["Jane Doe"], "birthDate":
-    ["1975"]}) — call describe_schema first if unsure of the names. Send every
-    property you have. Country values accept free text ("Russia"); the server
-    normalizes them, and matching works by value type rather than field name,
-    so don't agonize over e.g. `country` vs `jurisdiction`. For a sanctions
-    screen, pass topics=["sanction", "sanction.linked", "sanction.control"].
+    The tool for every "is this party listed?" question, even from just a
+    name. Describe the entity as fully as you can: `schema` is its FtM schema
+    and `properties` maps property names to value lists, e.g. {"name": ["Jane
+    Doe"], "birthDate": ["1975"], "nationality": ["Russia"]}. Send every
+    property you have — identifiers (imoNumber, registrationNumber) and dates
+    settle what names alone can't. Screen each party in its own call. For a
+    sanctions-only screen pass topics=["sanction", "sanction.linked",
+    "sanction.control"]; leave `topics` unset to also find PEPs and risk
+    listings.
 
-    `score` is 0-1 confidence; `match` is true when score >= `threshold`
-    (server default 0.7). Candidates below `cutoff` (server default 0.5) are
-    dropped. Each candidate's `explanation` lists the scoring features with
-    the query and candidate values they compared — read it before calling a
-    hit confirmed: a high score on a fuzzy name alone is a lead, not an
-    identification. When nothing clears the default cutoff, the closest
-    candidates come back under `near_misses`: below cutoff, not hits, but
-    their explanations show why they fell short. `legend.features` says what
-    each explanation feature compares. `checked` echoes the scope
-    that was screened. Expand a candidate with fetch_entity_by_id.
+    Each candidate has a `score` (0-1), `match` (score at or above the
+    threshold) and an `explanation`: the scoring features with the query and
+    candidate values each compared. A fuzzy name with nothing else agreeing is
+    a lead, not an identification — say which values agree, which conflict,
+    and what data would settle it. When no candidate clears the cutoff,
+    `near_misses` shows the closest ones and why they fell short. `checked`
+    echoes the scope screened and the data's `as_of` time.
+
+    Args:
+        dataset: Collection to screen against; "default" covers all sources.
+        threshold: Score at which `match` turns true; leave to the server.
+        cutoff: Score below which candidates are dropped; leave to the server.
     """
     entity = _build_entity(schema, properties)
     client = _resolve_client()
@@ -309,7 +312,14 @@ async def match_entity(
             )
     except YenteError as exc:
         raise ToolError(describe_error(exc)) from exc
-    checked = {"dataset": dataset, "topics": topics, "threshold": threshold, "cutoff": cutoff}
+    freshness = (await _catalog_info(client)).freshness or {}
+    checked = {
+        "dataset": dataset,
+        "topics": topics,
+        "threshold": threshold,
+        "cutoff": cutoff,
+        "as_of": freshness.get("updated_at"),
+    }
     results = [shaping.shape_scored(r) for r in resp.results]
     out: dict[str, Any] = {
         "query_schema": schema,
@@ -320,7 +330,9 @@ async def match_entity(
     }
     if near_misses is not None and near_misses.results:
         out["near_misses"] = [shaping.shape_scored(r) for r in near_misses.results]
-    return await _with_legend(out, client)
+    # `checked` echoes the caller's own scope, which needs no glossing.
+    codes = shaping.collect_codes({k: v for k, v in out.items() if k != "checked"})
+    return await _with_legend(out, client, codes)
 
 
 @mcp.tool(title="Search entities", annotations=_READ_ONLY)
@@ -336,12 +348,18 @@ async def search_entities(
     fuzzy: bool = False,
     simple: bool = False,
 ) -> dict[str, Any]:
-    """Free-text search over the database; returns plain (unscored) entities.
+    """Browse the database by keyword; return unscored entities.
 
-    For end-user search UIs — autocomplete, browse pages, boxes where a human
-    is typing the input. Not a fallback for match_entity: any match/no-match
-    decision on a known person or company uses match_entity, even with partial
-    input.
+    For exploring: what a term turns up, narrowed by schema, country or topic
+    (vessels flagged to a country, companies with a word in their name).
+    Never use it to decide whether a person or company is listed — results
+    carry no score or explanation, so neither a hit nor its absence proves
+    anything. Use match_entity for that, even with just a name.
+
+    Args:
+        fuzzy: Tolerate spelling variation in `q`.
+        simple: Read `q` as plain words, as typed into a search box, rather
+            than query syntax (AND / OR, quotes, field:value).
     """
     client = _resolve_client()
     kwargs: dict[str, Any] = {"datasets": [dataset]}
@@ -364,42 +382,33 @@ async def search_entities(
 
 @mcp.tool(title="Profile an entity", annotations=_READ_ONLY)
 async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str, Any]:
-    """Profile one entity by its OpenSanctions ID — the one call for "tell me about X".
+    """Profile one entity by ID: the call for "tell me about X".
 
-    Returns the entity's own record (names, dates, identifiers, addresses)
-    plus, in full where the entity has them:
+    Returns the entity's record (names, dates, identifiers, addresses) and, in
+    full, its risk basis:
 
     - `sanctions`: designations that impose a restriction (program,
       authority, dates).
-    - `risks`: listings that name the entity without imposing a restriction —
-      watch lists, advisories, persons-of-interest registers. Evidence for
-      review; never report a risk listing as "sanctioned".
-    - `positionOccupancies`: positions held (the post with its country,
-      dates, status).
+    - `risks`: listings that name the entity without a restriction (watch
+      lists, advisories, persons-of-interest registers).
+    - `positionOccupancies`: positions held, with country, dates and status.
 
     `relations` summarizes every other relationship type (ownership,
-    directorships, family, associates, …): the total count and the first few
-    edges, each counterparty with its risk topics and key properties. Use to
-    expand a candidate from match_entity / search_entities or a counterparty
-    from a relation. Needs a real entity ID, not a name. Answer from this
-    record rather than background knowledge, and say so where you go beyond
-    it. To cite, fill the `legend.links` templates with an entity's `id`, a
-    dataset's name or a program's key.
+    directorships, family, associates, …): its total and first few edges, each
+    counterparty with its topics. Page one type in full with
+    fetch_entity_relations. Prose is left out: `descriptions` counts the notes
+    and designation reasons that fetch_entity_descriptions returns.
+    `first_seen` / `last_change` say when a record entered the data and last
+    changed.
 
-    Prose is not here: `descriptions` counts the biography notes and
-    designation reasons that exist (e.g. {"notes": 16, "reason": 21}). Call
-    fetch_entity_descriptions to read them — the place to answer "why is this
-    entity listed?". A list whose `next_offset` is set has more edges than
-    shown — page them with fetch_entity_relations. `first_seen` / `last_change` dates on the
-    record and on each edge show when it entered the data and last changed.
     If `relations_unavailable` is set, sanctions and relations could not be
-    read — say so rather than reporting the entity as clean. If the returned
-    `id` differs from the one requested, the entity was merged during
-    deduplication — update any stored reference.
+    read — say so rather than calling the entity unlisted. A returned `id`
+    other than the one requested means the entity was merged into another;
+    use the new ID from then on.
 
     Args:
-        full: Return the raw, untrimmed record instead (including `referents`,
-            the source-record IDs merged into it), without relations.
+        full: Return the raw record instead, including `referents` (the
+            source records merged into it), without relations.
     """
     client = _resolve_client()
     try:
@@ -431,19 +440,16 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
 async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[str, Any]:
     """Read what sources write about an entity, verbatim and credited.
 
-    Use for "why is this entity listed?", for background on a person or
-    company, or to quote a source. Returns the reason text of each sanction
-    and risk listing first (with the designating record: authority, program,
-    dates), then the entity's own descriptions and biography notes. Each entry
-    names its `sources` (dataset, first seen); identical texts from several
-    sources appear once, translations separately with their `lang`. Official
-    sources come first. A dataset whose legend entry has `official: false` is
-    an aggregator, NGO or crowd-edited source rather than an authority — say
-    so when you rely on it.
+    The place to answer "why is this entity listed?", to give background on a
+    person or company, or to quote a source. The reasons given for each
+    sanction and risk listing come first, each with its designating record
+    (authority, program, dates), then the entity's own descriptions and
+    biography notes. Every entry names its `sources` (dataset, first seen),
+    official sources first; identical texts from several sources appear once,
+    translations separately with their `lang`.
 
-    Long histories are paged: continue with `offset` while `next_offset` is
-    set. `credits_unavailable` means the entity's own texts came from its
-    merged record without per-source credits (self-hosted yente has no
+    Page with `offset` while `next_offset` is set. `credits_unavailable` means
+    the texts carry no per-source credits (a self-hosted yente has no
     statement store); `relations_unavailable` means designation reasons could
     not be read.
     """
@@ -495,17 +501,17 @@ async def fetch_entity_relations(
     limit: int | None = None,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Page through an entity's relationships beyond what its profile shows.
+    """Page through one relationship type of an entity in full.
 
-    fetch_entity_by_id already summarizes every relationship type; use this to
-    walk one type in full. Pass a `prop` ("ownershipAsset",
-    "directorshipDirector", …: the profile's `sanctions` / `risks` /
-    `positionOccupancies` keys or the keys of its `relations`) and page
-    with `limit` (default 50) / `offset` until `next_offset` is null. With no
-    `prop`, returns every type with its total and a first page of 5. Each edge
-    carries its own properties (role, share, dates) and the counterparty as
-    {id, caption, schema, topics} plus its key `properties`. Prose such as a
-    sanction's reason is in fetch_entity_descriptions. Beta; shape may change.
+    A relationship is itself an entity (Ownership, Directorship, Family, …)
+    linking two others, and `prop` names the side this entity is on — the keys
+    of a profile's `relations`, or `sanctions` / `risks` /
+    `positionOccupancies`. For a company, "ownershipOwner" lists what it owns
+    and "ownershipAsset" who owns it. Each edge carries its own properties
+    (role, share, dates) and the counterparty with its topics. Page with
+    `limit` (default 50) / `offset` until `next_offset` is null; when you stop
+    early, say how many exist. With no `prop`, returns every type with its
+    total and first few edges.
     """
     if prop in shaping.HIDDEN_RELATION_PROPS:
         raise ToolError(
@@ -544,18 +550,16 @@ async def fetch_entity_statements(
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Audit where an entity's data came from, statement by statement.
+    """Trace which source asserted each value of an entity, and when.
 
-    Each statement is one property-value claim plus the dataset that asserted
-    it and when it was first and last seen. Use after a hit to answer "which
-    source says this?" — e.g. which list contributed an alias, birth date, or
-    address — or, with sort=["first_seen:desc"], "what changed since a
-    date". `entity_id` is the canonical ID from match/search/fetch results;
-    each row's `entity_id` names the pre-deduplication source record that was
-    merged into it. A sanction designation is its own entity: pass its ID
-    (from the profile's `sanctions`) to audit it. Narrow with `prop` (e.g.
-    "alias") or `dataset`. Available on the hosted OpenSanctions API only — a
-    self-hosted yente has no statement store and errors here.
+    A statement is one property value plus the dataset that asserted it and
+    when it was first and last seen. Use it for "which source says this?" (an
+    alias, a birth date, an address) or, with sort=["first_seen:desc"], for
+    "what changed since a date". Sanctions and positions are entities of their
+    own with their own statements: pass their IDs from the profile to check
+    them too. Narrow with `prop` (e.g. "alias") or `dataset`. Each row's
+    `entity_id` is the source record that was merged into the entity. Hosted
+    OpenSanctions API only; a self-hosted yente errors here.
     """
     client = _resolve_client()
     try:
@@ -574,12 +578,12 @@ async def fetch_entity_statements(
 
 @mcp.tool(title="Describe FollowTheMoney (FtM) schema", annotations=_READ_ONLY)
 def describe_schema(schema: str | None = None) -> dict[str, Any]:
-    """Look up the FtM data model (offline). No arg → index of matchable schemata;
-    a name (e.g. "Person") → its settable `properties` (the fields you fill in a
-    match_entity query, with real names like `birthDate`) plus `relations` (the
-    entity edges: pass a relation's `name` as `prop` to fetch_entity_relations,
-    `range` is the schema it points at, `reverse` is the source's role on the far
-    entity). Use before match_entity.
+    """Look up FtM schemata and their properties (bundled model, no API call).
+
+    Without an argument, lists the schemata match_entity accepts. With a name
+    ("Person", "Vessel"), returns its `properties` — the names match_entity
+    takes, such as `birthDate` or `imoNumber` — and its `relations`, the keys
+    fetch_entity_relations takes, with `range` the schema each points to.
     """
     if schema is None:
         return {"schemata": introspect.schema_index()}
@@ -591,43 +595,39 @@ def describe_schema(schema: str | None = None) -> dict[str, Any]:
 
 @mcp.tool(title="Describe topic tags", annotations=_READ_ONLY)
 def describe_topics() -> dict[str, str]:
-    """List the risk-topic vocabulary — the whole `topic` type (value → label).
+    """List every risk topic (code → label).
 
-    Use to pick values for the `topics` filter on match_entity /
-    search_entities (`sanction`, `role.pep`, …). Topic codes in results arrive
-    already labelled; this is the full menu.
+    Use to pick values for the `topics` filter of match_entity or
+    search_entities (`sanction`, `role.pep`, …). Topics in results already
+    carry their labels.
     """
     return introspect.topic_values()
 
 
 @mcp.tool(title="Describe country codes", annotations=_READ_ONLY)
 def describe_countries() -> dict[str, str]:
-    """List the country / jurisdiction vocabulary — the whole `country` type (code → name).
+    """List every country and jurisdiction code (code → name).
 
-    Use to pick codes for the `countries` filter on search_entities. Country
-    codes in results already resolve through the response's `legend`.
+    Use to pick codes for the `countries` filter of search_entities;
+    match_entity takes country names as free text. Country codes in results
+    already resolve through the `legend`.
     """
     return introspect.country_values()
 
 
 @mcp.tool(title="Describe a dataset", annotations=_READ_ONLY)
-async def describe_dataset(name: str | None = None) -> dict[str, Any]:
-    """Resolve dataset names to their metadata (live catalog).
+async def describe_dataset(name: str) -> dict[str, Any]:
+    """Look up one source dataset: publisher, summary, coverage, update times.
 
-    No arg → a compact index of every indexed dataset (name, title, tags like
-    `list.sanction` / `list.pep`, entity_count) for discovery. A name (e.g.
-    "us_ofac_sdn") → that dataset's full record: title, summary, publisher,
-    coverage, counts, freshness. Dataset names in results already resolve through
-    the response `legend`; call this when the analyst needs the dataset's
-    substance — who publishes it, what it covers, how fresh it is.
+    Use for questions about a source itself, such as how current a list is or
+    who publishes it. Names (e.g. "us_ofac_sdn") come from an entity's
+    `datasets` or the legend; an unknown name returns the closest matches.
     """
     client = _resolve_client()
     try:
         resp = await client.datasets()
     except YenteError as exc:
         raise ToolError(describe_error(exc)) from exc
-    if name is None:
-        return {"datasets": shaping.dataset_index(resp)}
     for dataset in resp.datasets:
         if dataset.name == name:
             out = dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
@@ -637,27 +637,23 @@ async def describe_dataset(name: str | None = None) -> dict[str, Any]:
             if dataset.publisher is not None:
                 codes.add_values("country", [dataset.publisher.country])
             return await _with_legend(out, client, codes)
-    raise ToolError(f"Unknown dataset {name!r}. Call describe_dataset() for the catalog index.")
+    titles = {d.name: d.title for d in resp.datasets}
+    raise ToolError(shaping.unknown_name("dataset", name, titles))
 
 
 @mcp.tool(title="Describe a sanctions program", annotations=_READ_ONLY)
-async def describe_program(key: str | None = None) -> dict[str, Any]:
-    """Resolve `programId` codes to sanctions-program metadata.
+async def describe_program(key: str) -> dict[str, Any]:
+    """Look up one sanctions program: issuer, policy summary, measures, links.
 
-    No arg → a compact index of every program (key, title, issuer territory).
-    A key (e.g. "US-RUSHAR" — the `programId` values sanctioned entities
-    carry) → that program's full record: title, issuer, policy summary,
-    measures, and links. Program codes in results already resolve through
-    the response `legend`; call this when the analyst needs the program's
-    substance — who imposed it, why, and what it restricts.
+    Use when the user needs a program's substance — who imposed it, why, and
+    what it restricts. Keys (e.g. "US-RUSHAR") are the `programId` values on
+    sanctioned entities; an unknown key returns the closest matches.
     """
     client = _resolve_client()
     try:
         catalog = await _program_catalog(client)
     except YenteError as exc:
         raise ToolError(describe_error(exc)) from exc
-    if key is None:
-        return {"programs": shaping.program_index(catalog)}
     for program in catalog:
         if program.key == key or key in program.aliases:
             out = program.model_dump(mode="json", exclude_none=True)
@@ -667,7 +663,8 @@ async def describe_program(key: str | None = None) -> dict[str, Any]:
             if program.dataset:
                 codes.datasets.add(program.dataset)
             return await _with_legend(out, client, codes)
-    raise ToolError(f"Unknown program {key!r}. Call describe_program() for the index.")
+    titles = {p.key: p.title for p in catalog}
+    raise ToolError(shaping.unknown_name("program", key, titles))
 
 
 # ----- resources: ftm:// (static, bundled model, no server call) -----

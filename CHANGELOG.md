@@ -35,11 +35,18 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - sanctions programs, with title, issuer and territory
   - the match explanation's scoring features, with descriptions
   
-  The legend also reports `freshness`, the default collection's index
-  version and update time, and `links`: templates for citing an entity,
+  The legend covers only codes the response contains, and is left out when
+  there are none. It also carries `links`: templates for citing an entity,
   dataset or program on the OpenSanctions website, present only against the
-  hosted API. Topic labels stay
-  inline on each entity.
+  hosted API. Topic labels stay inline on each entity. `match_entity`
+  reports the data's update time as `checked.as_of`.
+- **MCP `describe_dataset` and `describe_program` require a name or key.**
+  The no-argument catalog indexes are gone: they were too large for an
+  agent's context. An unknown name returns the closest matching entries.
+- **Rewritten MCP server instructions and tool descriptions.** The
+  instructions now explain the data model and the rules shared by every
+  tool; `search_entities` is described as keyword browsing, never a way to
+  decide whether someone is listed.
 
 ### Added
 

@@ -59,7 +59,7 @@ Screening and investigation:
 | Tool | Purpose |
 | --- | --- |
 | `match_entity` | Screen one entity, query-by-example; returns scored candidates with the evidence behind each score. Use for any matching task, even with partial input. |
-| `search_entities` | Free-text search for end-user search UIs; returns unscored entities. |
+| `search_entities` | Keyword browsing; returns unscored entities. Never a way to decide whether someone is listed. |
 | `fetch_entity_by_id` | Profile one entity by OpenSanctions ID: its record, its sanctions, risk listings and positions held in full, and a summary of its other relationships. |
 | `fetch_entity_descriptions` | What sources write about an entity, verbatim: sanction and risk reasons, then descriptions and biography notes, each credited to its source dataset. |
 | `fetch_entity_relations` | Page through one relationship type (ownership, directorships, family, …) in full. |
@@ -72,13 +72,14 @@ Vocabulary and metadata lookups:
 | `describe_schema` | FtM schemata and their properties (offline, bundled model). |
 | `describe_topics` | The risk-topic vocabulary (offline). |
 | `describe_countries` | The country vocabulary (offline). |
-| `describe_dataset` | Dataset metadata from the live catalog. |
-| `describe_program` | Sanctions-program metadata behind `programId` codes. |
+| `describe_dataset` | One dataset's metadata from the live catalog, by name. |
+| `describe_program` | One sanctions program's metadata, by its `programId` key. |
 
 Results resolve their own codes, so agents don't have to guess what an
 identifier like `crime.war` or `us_ofac_sdn` means. Topic labels sit inline
 on each entity. Every other code in a response resolves through a single
-`legend` attached to it, with the same sections in every tool:
+`legend` attached to it. The legend covers only the codes that response
+contains, with the same sections in every tool:
 
 - `schemata`: each schema's label, plural and ancestors, so a `Company`
   reads as a kind of `LegalEntity`.
@@ -93,8 +94,7 @@ on each entity. Every other code in a response resolves through a single
   issuer and territory.
 - `features`: what each scoring feature in a match explanation compares.
 
-The legend also carries `freshness`, the version and update time of the data
-that answered, and `links`, templates for citing an entity, dataset or
+The legend also carries `links`, templates for citing an entity, dataset or
 program on the OpenSanctions website. Links only appear when the server runs
 against the hosted OpenSanctions API.
 
@@ -104,7 +104,8 @@ Every response follows the same shape:
   the query and candidate values each one compared, such as two birth dates
   that disagree. When nothing clears the cutoff, the closest candidates come
   back as `near_misses`, so a "no match" can still be explained. `checked`
-  echoes the dataset and topics that were screened.
+  echoes the dataset and topics that were screened, and `as_of`, when the
+  data was last updated.
 - **Lists** carry `total`, `returned` and `next_offset`. A `next_offset` of
   `null` means the list is complete.
 - **Entities and relationship edges** carry `first_seen` and `last_change`

@@ -9,13 +9,11 @@ from yente_client.mcp.shaping import (
     LegendCodes,
     build_legend,
     collect_codes,
-    dataset_index,
     dataset_records,
     feature_descriptions,
     freshness,
     page_entries,
     page_info,
-    program_index,
     program_records,
     shape,
     shape_adjacency,
@@ -25,12 +23,12 @@ from yente_client.mcp.shaping import (
     shape_scored,
     shape_statements,
     text_entries,
+    unknown_name,
 )
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
     AlgorithmsResponse,
-    Dataset,
     DatasetsResponse,
     Entity,
     FeatureResult,
@@ -468,6 +466,8 @@ def test_legend_gathers_codes_across_the_response() -> None:
     # relation keys of the profile resolve against the entity's own schema
     assert codes.properties["sanctions"]["range"] == "Sanction"
     assert codes.properties["ownershipOwner"]["type"] == "entity"
+    # a property's range alone doesn't put its schema in the legend
+    assert "Asset" not in codes.schemata
 
 
 def test_legend_labels_properties_by_their_own_schema() -> None:
@@ -547,18 +547,11 @@ def test_legend_resolves_features_present_in_explanations() -> None:
     assert legend["features"] == {"name_match": "Compares names"}
 
 
-def test_legend_carries_freshness_and_links() -> None:
+def test_legend_carries_links() -> None:
     legend = build_legend(
-        LegendCodes(),
-        datasets={},
-        programs={},
-        freshness={"version": "v1"},
-        links={"entity": "https://example.org/{id}"},
+        LegendCodes(), datasets={}, programs={}, links={"entity": "https://example.org/{id}"}
     )
-    assert legend == {
-        "freshness": {"version": "v1"},
-        "links": {"entity": "https://example.org/{id}"},
-    }
+    assert legend == {"links": {"entity": "https://example.org/{id}"}}
 
 
 def test_legend_programs_add_their_territory() -> None:
@@ -715,45 +708,20 @@ def test_feature_descriptions_follow_the_default_alias(load_fixture) -> None:
     assert "dob_year_disjoint" in features
 
 
-def test_program_index_projects_compact_fields() -> None:
-    programs = [
-        Program(
-            key="US-RUSHAR",
-            title="Russian Harmful Foreign Activities Sanctions",
-            summary="dropped from the index projection",
-            issuer=ProgramIssuer(name="OFAC", territory="us"),
-        ),
-        Program(key="EU-UKR"),
-    ]
-    out = program_index(programs)
-    assert out[0] == {
-        "key": "US-RUSHAR",
-        "title": "Russian Harmful Foreign Activities Sanctions",
-        "territory": "us",
+def test_unknown_name_suggests_entries_containing_the_query() -> None:
+    titles = {
+        "us_ofac_sdn": "OFAC Specially Designated Nationals",
+        "us_ofac_cons": "OFAC Consolidated List",
+        "eu_fsf": "EU Financial Sanctions Files",
     }
-    assert out[1] == {"key": "EU-UKR", "title": None, "territory": None}
+    message = unknown_name("dataset", "ofac", titles)
+    assert message.startswith("Unknown dataset 'ofac'. Closest: ")
+    assert "us_ofac_sdn (OFAC Specially Designated Nationals)" in message
+    assert "us_ofac_cons" in message
+    assert "eu_fsf" not in message
 
 
-def test_dataset_index_projects_compact_fields() -> None:
-    resp = DatasetsResponse(
-        datasets=[
-            Dataset(
-                name="us_ofac_sdn",
-                title="OFAC Specially Designated Nationals",
-                tags=["list.sanction"],
-                entity_count=12000,
-                summary="dropped from the index projection",
-            ),
-            Dataset(name="default", title="All datasets"),
-        ]
-    )
-    out = dataset_index(resp)
-    assert out[0] == {
-        "name": "us_ofac_sdn",
-        "title": "OFAC Specially Designated Nationals",
-        "tags": ["list.sanction"],
-        "entity_count": 12000,
-    }
-    assert out[1]["name"] == "default"
-    assert out[1]["tags"] == []
-    assert out[1]["entity_count"] is None
+def test_unknown_name_falls_back_to_fuzzy_matches() -> None:
+    message = unknown_name("program", "US-RUSHARM", {"US-RUSHAR": None, "EU-UKR": "Ukraine"})
+    assert message == "Unknown program 'US-RUSHARM'. Closest: US-RUSHAR."
+    assert unknown_name("program", "zzz", {"EU-UKR": "Ukraine"}).endswith("nothing close to it.")

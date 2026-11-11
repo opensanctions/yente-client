@@ -20,12 +20,13 @@ next to its code gets used where a separate legend gets skipped. Every other
 code — schemata, property names, enum values such as countries and languages,
 dataset and program keys, match features — resolves through one ``legend``
 per response, built by walking the finished output (:func:`collect_codes`,
-:func:`build_legend`). The legend also says which index build answered
-(``freshness``) and how to link to an entity (``links``).
+:func:`build_legend`), so it describes only codes the response contains. The
+legend also says how to link to an entity (``links``).
 
 Pure functions over the SDK response models — no FastMCP, unit-testable.
 """
 
+import difflib
 import functools
 import json
 from collections.abc import Iterable, Mapping
@@ -57,13 +58,16 @@ _PropDef = tuple[str | None, str | None, str | None]
 
 WEBSITE = "https://www.opensanctions.org"
 
-# The collection whose index build every response reports as its `freshness`.
+# The collection whose index build a screen reports as its `as_of`.
 DEFAULT_COLLECTION = "default"
 
 # Value types left out of every view. `text` / `html` are the prose served by
 # the descriptions tool; the rest is machine payload.
 _PROSE_TYPES: frozenset[str] = frozenset({"text", "html"})
 _BULK_TYPES: frozenset[str] = _PROSE_TYPES | {"json", "checksum", "mimetype"}
+
+# How many catalog entries an unknown-name error suggests.
+_SUGGESTIONS = 5
 
 # How many positive scoring features to surface per candidate. Negative
 # features are always kept: penalties are what explain a near-miss.
@@ -359,8 +363,6 @@ class LegendCodes:
             return
         rec = {"label": label, "type": prop_type, "range": range_}
         self.properties[name] = {k: v for k, v in rec.items() if v is not None}
-        if range_ is not None:
-            self.schemata.add(range_)
 
 
 def collect_codes(obj: Any) -> LegendCodes:
@@ -382,7 +384,6 @@ def build_legend(
     datasets: Mapping[str, Mapping[str, Any]],
     programs: Mapping[str, Mapping[str, Any]],
     features: Mapping[str, str] | None = None,
-    freshness: Mapping[str, Any] | None = None,
     links: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Resolve gathered codes into the response's ``legend``.
@@ -400,7 +401,6 @@ def build_legend(
     territories = (p.get("territory") for p in program_entries.values())
     values.setdefault("country", set()).update(t for t in territories if t)
     sections: dict[str, Any] = {
-        "freshness": dict(freshness or {}),
         "links": dict(links or {}),
         "schemata": {s: _schema_record(s) for s in sorted(codes.schemata) if schemas.has_schema(s)},
         "properties": dict(sorted(codes.properties.items())),
@@ -454,8 +454,8 @@ def program_records(programs: list[Program]) -> dict[str, dict[str, Any]]:
 def freshness(resp: DatasetsResponse) -> dict[str, Any] | None:
     """Return the version and update time of the default collection, if indexed.
 
-    Every tool reports the same snapshot regardless of the dataset it was
-    scoped to: a scoped search still runs against one index build.
+    A screen reports this snapshot as its ``as_of`` regardless of the dataset
+    it was scoped to: a scoped search still runs against one index build.
     """
     for d in resp.datasets:
         if d.name == DEFAULT_COLLECTION:
@@ -477,37 +477,26 @@ def feature_descriptions(resp: AlgorithmsResponse) -> dict[str, str]:
     return {name: doc.description for name, doc in algorithm.features.items() if doc.description}
 
 
-def program_index(programs: list[Program]) -> list[dict[str, Any]]:
-    """Project the program catalog to a compact index for discovery.
+def unknown_name(kind: str, name: str, titles: Mapping[str, str | None]) -> str:
+    """Build the error for an unknown catalog name, listing the closest entries.
 
-    Full per-program records (summary, issuer, measures) are fetched on demand
-    by key, mirroring :func:`dataset_index`.
+    The catalogs are too large to list whole, so a miss is the agent's way in:
+    entries whose name or title contains ``name`` come first, then fuzzy
+    matches on either.
+
+    Args:
+        titles: Every catalog name mapped to its title.
     """
-    return [
-        {
-            "key": p.key,
-            "title": p.title,
-            "territory": p.issuer.territory if p.issuer else None,
-        }
-        for p in programs
-    ]
-
-
-def dataset_index(resp: DatasetsResponse) -> list[dict[str, Any]]:
-    """Project the catalog to a compact name → title index for discovery.
-
-    The full per-dataset record (summary, publisher, coverage, counts) is fetched
-    on demand by name; this keeps the index cheap enough to scan in one call.
-    """
-    return [
-        {
-            "name": d.name,
-            "title": d.title,
-            "tags": d.tags,
-            "entity_count": d.entity_count,
-        }
-        for d in resp.datasets
-    ]
+    needle = name.lower()
+    by_text = {key.lower(): key for key in titles}
+    by_text.update({t.lower(): key for key, t in titles.items() if t})
+    contained = [key for text, key in by_text.items() if needle in text]
+    close = [by_text[t] for t in difflib.get_close_matches(needle, by_text, n=_SUGGESTIONS)]
+    hits = list(dict.fromkeys(contained + close))[:_SUGGESTIONS]
+    if not hits:
+        return f"Unknown {kind} {name!r}, and nothing close to it."
+    listed = "; ".join(f"{key} ({titles[key]})" if titles[key] else key for key in hits)
+    return f"Unknown {kind} {name!r}. Closest: {listed}."
 
 
 def _properties(entity: Entity, level: Level, source_id: str | None) -> dict[str, list[Any]]:
@@ -669,9 +658,8 @@ def _walk(obj: Any, codes: LegendCodes) -> None:
         return
     schema = obj.get("schema")
     props = obj.get("properties")
-    for key in ("schema", "query_schema"):
-        if isinstance(obj.get(key), str):
-            codes.schemata.add(obj[key])
+    if isinstance(schema, str):
+        codes.schemata.add(schema)
     if isinstance(schema, str) and isinstance(props, dict):
         codes.datasets.update(d for d in obj.get("datasets", ()) if isinstance(d, str))
         defs = _defs_for(schema)
