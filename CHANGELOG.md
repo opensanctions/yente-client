@@ -78,6 +78,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Algorithm.features`** maps each scoring feature name to a new
   **`FeatureDoc`** (description, coefficient, source link), as served by
   `/algorithms`.
+- **Bundled model updated to followthemoney v4.11.3.** New entity classes
+  `Control` and `Territory`; `Risk` gains `authority`, `program`,
+  `programId` and `programUrl`; `LegalEntity` gains `cikCode`; and the
+  `Topic` enum gains `corp.clone` and `geo.risk`.
 
 ## [0.2.0] - 2026-07-23
 

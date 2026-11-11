@@ -21,6 +21,7 @@ Schema = Literal[
     "Company",
     "Contract",
     "ContractAward",
+    "Control",
     "CourtCase",
     "CourtCaseParty",
     "CryptoWallet",
@@ -68,6 +69,7 @@ Schema = Literal[
     "Succession",
     "Table",
     "TaxRoll",
+    "Territory",
     "Thing",
     "Trip",
     "UnknownLink",
@@ -104,6 +106,7 @@ PropertyType = Literal[
 
 Topic = Literal[
     "asset.frozen",
+    "corp.clone",
     "corp.disqual",
     "corp.offshore",
     "corp.public",
@@ -129,6 +132,7 @@ Topic = Literal[
     "fin.bank",
     "fin.fund",
     "forced.labor",
+    "geo.risk",
     "gov",
     "gov.admin",
     "gov.executive",
