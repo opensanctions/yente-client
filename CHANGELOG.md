@@ -12,6 +12,14 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **The `mcp` extra needs `fastmcp>=4.0`** (MCP SDK 2.x). The server uses
   the SDK 2.x field names for tool annotations and icons.
+- **The missing-extra hints for `yente-cli` and `yente-mcp` show the `uvx`
+  command first**, then the `pip install` command. The docs show `uvx` as
+  the recommended way to run both tools.
+
+### Fixed
+
+- **`yente-mcp` without the `mcp` extra prints the install hint** in place of
+  a raw `ModuleNotFoundError: No module named 'mcp'`.
 
 ## [0.2.0] - 2026-07-23
 

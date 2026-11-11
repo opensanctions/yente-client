@@ -11,9 +11,9 @@ persons (PEPs), and watchlists.
 ## Install
 
 ```bash
-pip install yente-client            # Python SDK
-pip install 'yente-client[cli]'     # + the `yente-cli` command-line tool
-pip install 'yente-client[mcp]'     # + the `yente-mcp` server for LLM agents
+pip install yente-client                          # Python SDK
+uvx --from 'yente-client[cli]' yente-cli --help   # `yente-cli` command-line tool
+uvx --from 'yente-client[mcp]' yente-mcp          # `yente-mcp` server for LLM agents
 ```
 
 ## Quickstart

@@ -29,7 +29,6 @@ it stays testable without FastMCP.
 import time
 from typing import Any
 
-from mcp.types import Icon, ToolAnnotations
 from pydantic import ValidationError
 
 from yente_client import entities, env
@@ -38,7 +37,13 @@ from yente_client.async_client import AsyncClient
 from yente_client.entities import EntityInput
 from yente_client.exceptions import YenteError
 from yente_client.mcp import introspect, shaping
-from yente_client.mcp._deps import FastMCP, ToolError, get_http_headers
+from yente_client.mcp._deps import (
+    FastMCP,
+    Icon,
+    ToolAnnotations,
+    ToolError,
+    get_http_headers,
+)
 from yente_client.mcp.auth import client_for, resolve_api_key
 from yente_client.mcp.errors import describe_error
 from yente_client.models import Program

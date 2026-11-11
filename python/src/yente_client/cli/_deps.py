@@ -16,7 +16,9 @@ import sys
 def _bail(missing: str) -> None:
     sys.stderr.write(
         f"The yente-cli command requires the '{missing}' package.\n"
-        "Install the CLI extra:\n"
+        "Run it with the CLI extra:\n"
+        "  uvx --from 'yente-client[cli]' yente-cli\n"
+        "or install the extra:\n"
         "  pip install 'yente-client[cli]'\n"
     )
     sys.exit(127)

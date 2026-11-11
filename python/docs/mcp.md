@@ -14,9 +14,18 @@ and CLI.
 ## Install and run
 
 ```bash
-pip install 'yente-client[mcp]'
 export OPENSANCTIONS_API_KEY=...   # fallback key, handy for local runs
-yente-mcp
+uvx --from 'yente-client[mcp]' yente-mcp
+```
+
+Other ways to run it:
+
+```bash
+# Install it on your PATH as a uv tool:
+uv tool install 'yente-client[mcp]'
+
+# With pip, in a virtual environment:
+pip install 'yente-client[mcp]'
 ```
 
 The server speaks streamable HTTP and binds `127.0.0.1:8000` by default; the
@@ -51,6 +60,15 @@ claude mcp add --transport http yente http://127.0.0.1:8000/mcp \
 
 Any MCP client that supports streamable HTTP connects the same way: point it
 at the `/mcp` endpoint and set the bearer header.
+
+For a local, single-user setup, the client can start the server itself over
+stdio. In that mode no bearer header exists, so the server uses
+`OPENSANCTIONS_API_KEY` from its environment:
+
+```bash
+claude mcp add yente --env OPENSANCTIONS_API_KEY=$OPENSANCTIONS_API_KEY \
+    -- uvx --from 'yente-client[mcp]' yente-mcp --transport stdio
+```
 
 ## Tools
 
