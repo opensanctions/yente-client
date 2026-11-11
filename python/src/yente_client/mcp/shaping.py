@@ -70,8 +70,6 @@ from yente_client.schemas import (
 
 Level = Literal["ref", "stub", "summary"]
 
-WEBSITE = "https://www.opensanctions.org"
-
 # The collection whose index build a screen reports as its `as_of`.
 DEFAULT_COLLECTION = "default"
 
@@ -579,7 +577,7 @@ def _stub_properties(entity: Entity) -> dict[str, list[str]]:
     """
     out: dict[str, list[str]] = {}
     for name in _featured_names(entity.schema_):
-        values = [v for v in entity.properties.get(name, []) if isinstance(v, str)]
+        values = entity.get(name)
         if name == "name" and values == [entity.caption]:
             continue
         if values:
@@ -591,7 +589,7 @@ def _prose_values(entity: Entity) -> dict[str, list[str]]:
     """The entity's prose property values, by property name."""
     out: dict[str, list[str]] = {}
     for name in _prose_names(entity.schema_):
-        values = [v for v in entity.properties.get(name, []) if isinstance(v, str)]
+        values = entity.get(name)
         if values:
             out[name] = values
     return out
@@ -666,11 +664,7 @@ def _topic_labels(entity: Entity) -> dict[str, str]:
     itself rather than being dropped — a raw code is still signal.
     """
     vocab = type_spec("topic").values
-    return {
-        code: vocab.get(code, code)
-        for code in entity.properties.get("topics", [])
-        if isinstance(code, str)
-    }
+    return {code: vocab.get(code, code) for code in entity.get("topics")}
 
 
 def _explanation(entity: ScoredEntity) -> dict[str, dict[str, Any]]:

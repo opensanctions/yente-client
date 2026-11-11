@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from yente_client.entities import Company, Email, Person
+from yente_client.entities import Company, Email, Person, entity_class
 from yente_client.entities._base import _EntityBase
 from yente_client.schemas._literals import Gender, PropertyType, Schema, Topic
 
@@ -206,3 +206,10 @@ def test_stub_properties_excluded() -> None:
     # Stubs hitting extra="forbid" gives a clear ValidationError.
     with pytest.raises(ValidationError):
         Person(images=["some-id"])
+
+
+def test_entity_class_resolves_schema_names() -> None:
+    assert entity_class("Person") is Person
+    assert entity_class("Company").schema_ == "Company"
+    with pytest.raises(KeyError):
+        entity_class("Persn")

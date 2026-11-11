@@ -37,10 +37,10 @@ from typing import Any, Literal, NamedTuple
 from mcp.types import CallToolRequestParams, Icon, ToolAnnotations
 from pydantic import ValidationError
 
-from yente_client import entities, env
-from yente_client._http import _client_version, is_opensanctions_url
+from yente_client import __version__, env
+from yente_client._http import is_opensanctions_url
 from yente_client.async_client import AsyncClient
-from yente_client.entities import EntityInput
+from yente_client.entities import EntityInput, entity_class
 from yente_client.exceptions import YenteError
 from yente_client.mcp import introspect, shaping
 from yente_client.mcp._deps import (
@@ -119,9 +119,9 @@ API_KEY = env.api_key()
 HOSTED = is_opensanctions_url(BASE_URL)
 _LINKS = (
     {
-        "entity": f"{shaping.WEBSITE}/entities/{{id}}/",
-        "dataset": f"{shaping.WEBSITE}/datasets/{{name}}/",
-        "program": f"{shaping.WEBSITE}/programs/{{key}}/",
+        "entity": env.ENTITY_URL_TEMPLATE,
+        "dataset": f"{env.WEBSITE_URL}/datasets/{{name}}/",
+        "program": f"{env.WEBSITE_URL}/programs/{{key}}/",
     }
     if HOSTED
     else None
@@ -131,7 +131,7 @@ mcp: FastMCP = FastMCP(
     # name and instructions default to "yente" / the stock copy, but a self-hosted
     # deployment can rebrand both via $YENTE_MCP_NAME / $YENTE_MCP_INSTRUCTIONS.
     name=env.mcp_name(),
-    version=_client_version(),
+    version=__version__,
     website_url="https://www.opensanctions.org",
     icons=[
         # Full-colour brand mark first (renders on any background), favicons as
@@ -279,16 +279,16 @@ def _cap(limit: int | None) -> int | None:
 
 def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
     """Construct a typed input entity from a schema name + property bag."""
-    schema_cls = getattr(entities, schema, None)
-    if not isinstance(schema_cls, type):
+    try:
+        schema_cls = entity_class(schema)
+    except KeyError:
         raise ToolError(
             f'Unknown FtM schema {schema!r}. Call describe(kind="schema") for the list.'
-        )
+        ) from None
     try:
-        entity: EntityInput = schema_cls(**properties)
+        return schema_cls.model_validate(properties)
     except ValidationError as exc:
         raise ToolError(f"Invalid properties for schema {schema!r}: {exc}") from exc
-    return entity
 
 
 # ----- tools -----

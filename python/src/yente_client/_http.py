@@ -46,12 +46,15 @@ def validate_app_name(name: str) -> str:
     return name
 
 
-def _client_version() -> str:
-    """Resolve ``yente-client``'s installed version. Falls back for editable / unbuilt cases."""
+def _installed_version() -> str:
     try:
         return version("yente-client")
     except PackageNotFoundError:
         return "0.0.0+unknown"
+
+
+VERSION = _installed_version()
+"""Installed ``yente-client`` version; ``0.0.0+unknown`` in an unbuilt checkout."""
 
 
 def build_user_agent(app_name: str | None = None, override: str | None = None) -> str:
@@ -71,7 +74,7 @@ def build_user_agent(app_name: str | None = None, override: str | None = None) -
         parts.append(app_name)
     parts.append(f"python/{py}")
     parts.append(f"httpx/{httpx.__version__}")
-    return f"yente-client/{_client_version()} ({'; '.join(parts)})"
+    return f"yente-client/{VERSION} ({'; '.join(parts)})"
 
 
 def is_opensanctions_url(base_url: str) -> bool:

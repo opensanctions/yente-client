@@ -14,7 +14,7 @@ from typing import Any, TextIO
 
 from pydantic import ValidationError
 
-from yente_client import entities
+from yente_client import env
 from yente_client.cli._deps import Console, typer
 from yente_client.cli.commands import (
     _resolve_matchable_schema,
@@ -23,11 +23,9 @@ from yente_client.cli.commands import (
     _with_client,
 )
 from yente_client.client import BEST_ALGORITHM
-from yente_client.entities import EntityInput
+from yente_client.entities import EntityInput, entity_class
 from yente_client.models import MatchError, MatchResponse, ScoredEntity
 from yente_client.schemas import is_matchable_schema
-
-ENTITY_URL_TEMPLATE = "https://www.opensanctions.org/entities/{id}/"
 
 # Result columns the command itself emits, in output order. `match` (the
 # threshold flag) deliberately has no prefix — `match_match` would stutter.
@@ -49,8 +47,9 @@ def _parse_mapping(spec: str, flag: str, shape: str) -> tuple[str, str]:
 
 def _resolve_row_schema(name: str) -> type[EntityInput] | str:
     """Resolve a per-row schema name; return an error message instead of exiting."""
-    schema_cls = getattr(entities, name, None)
-    if schema_cls is None or not isinstance(schema_cls, type):
+    try:
+        schema_cls = entity_class(name)
+    except KeyError:
         suggestion = _suggest_schema(name)
         hint = f" (did you mean {suggestion!r}?)" if suggestion else ""
         return f"unknown schema {name!r}{hint}"
@@ -361,23 +360,20 @@ def _run_screen(
     next_flush = 1
 
     def candidate_cells(result: ScoredEntity) -> dict[str, str]:
-        def prop_values(prop: str) -> str:
-            return join.join(v for v in result.properties.get(prop, []) if isinstance(v, str))
-
         cells = {
             "match_id": result.id,
             "match_caption": result.caption,
             "match_score": f"{result.score:.3f}",
             "match": "true" if result.match else "false",
-            "match_topics": prop_values("topics"),
+            "match_topics": join.join(result.get("topics")),
         }
         if url:
-            cells["match_url"] = ENTITY_URL_TEMPLATE.format(id=result.id)
+            cells["match_url"] = env.ENTITY_URL_TEMPLATE.format(id=result.id)
         if explanation:
             features = sorted(result.contributing_explanations.items(), key=lambda kv: -kv[1].score)
             cells["match_explanation"] = join.join(f"{n}={f.score:.2f}" for n, f in features)
         for prop, column in out_mappings:
-            cells[column] = prop_values(prop)
+            cells[column] = join.join(result.get(prop))
         return cells
 
     def emit(row: dict[str, Any], outcome: MatchResponse | str) -> None:

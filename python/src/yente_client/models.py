@@ -71,6 +71,14 @@ class Entity(BaseModel):
     last_seen: datetime | None = None
     last_change: datetime | None = None
 
+    def get(self, prop: str) -> list[str]:
+        """Return a property's plain values, leaving out nested entities.
+
+        Use this for display and export; walk ``properties`` directly when the
+        nested entities (a sanction's details, an owner) matter.
+        """
+        return [v for v in self.properties.get(prop, []) if isinstance(v, str)]
+
 
 class ScoredEntity(Entity):
     """An ``Entity`` plus match-specific scoring fields.

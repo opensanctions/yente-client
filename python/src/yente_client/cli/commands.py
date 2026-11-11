@@ -10,13 +10,12 @@ import difflib
 import json
 import time
 from collections.abc import Iterator
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from pydantic import ValidationError
 
-from yente_client import entities
+from yente_client import __version__
 from yente_client.cli._deps import TyperCommand, typer
 from yente_client.cli.config import CliConfig
 from yente_client.cli.output import (
@@ -27,7 +26,7 @@ from yente_client.cli.output import (
     resolve_format,
 )
 from yente_client.client import Client
-from yente_client.entities import EntityInput
+from yente_client.entities import EntityInput, entity_class
 from yente_client.exceptions import (
     APIError,
     ConfigurationError,
@@ -120,25 +119,6 @@ def _suggest_property(schema: str, prop_name: str) -> str | None:
 # ----- shared helpers -----
 
 
-def _read_model_version() -> str:
-    """Return the bundled ``model.json``'s upstream ``version`` (e.g. ``"4.8.4"``)."""
-    model_path = Path(__file__).resolve().parent.parent / "schemas" / "model.json"
-    try:
-        raw: dict[str, Any] = json.loads(model_path.read_text())
-    except (OSError, ValueError):
-        return "unknown"
-    version = raw.get("version")
-    return str(version) if version else "unknown"
-
-
-def _client_version() -> str:
-    """Resolve the installed ``yente-client`` version, with a fallback."""
-    try:
-        return version("yente-client")
-    except PackageNotFoundError:
-        return "0.0.0+unknown"
-
-
 # ----- status (the catch-all "is everything wired up?" view) -----
 
 
@@ -204,8 +184,8 @@ def _gather_status(config: CliConfig) -> dict[str, Any]:
 
     summary: dict[str, Any] = {
         "client": {
-            "version": _client_version(),
-            "model_version": _read_model_version(),
+            "version": __version__,
+            "model_version": model.get("version", "unknown"),
         },
         "api": {
             "url": config.base_url,
@@ -755,7 +735,7 @@ def search_command(
                 r.caption,
                 r.schema_,
                 ", ".join(r.datasets[:3]),
-                ", ".join(t for t in r.properties.get("topics", []) if isinstance(t, str)),
+                ", ".join(r.get("topics")),
             ]
             for r in response.results
         ]
@@ -775,14 +755,13 @@ def _print_entity_summary(entity: Entity) -> None:
     Full property detail is too wide for a table; users wanting it should use
     ``-f json``. This summary is the at-a-glance view.
     """
-    topics = [t for t in entity.properties.get("topics", []) if isinstance(t, str)]
     rows: list[list[Any]] = [
         ["id", entity.id],
         ["caption", entity.caption],
         ["schema", entity.schema_],
         ["target", "yes" if entity.target else "no"],
         ["datasets", ", ".join(entity.datasets)],
-        ["topics", ", ".join(topics)],
+        ["topics", ", ".join(entity.get("topics"))],
     ]
     print_table(rows, headers=["field", "value"], title=entity.caption)
 
@@ -895,7 +874,7 @@ def match_command(
                 r.caption,
                 r.schema_,
                 ", ".join(r.datasets[:3]),
-                ", ".join(t for t in r.properties.get("topics", []) if isinstance(t, str)),
+                ", ".join(r.get("topics")),
             ]
             for r in response.results
         ]
@@ -918,15 +897,16 @@ def _resolve_matchable_schema(schema: str, command: str = "match") -> type[Entit
 
     ``command`` names the invoking subcommand in the error message.
     """
-    schema_cls = getattr(entities, schema, None)
-    if schema_cls is None or not isinstance(schema_cls, type):
+    try:
+        schema_cls = entity_class(schema)
+    except KeyError:
         suggestion = _suggest_schema(schema)
         hint = f" Did you mean: {suggestion}?" if suggestion else ""
         typer.echo(
             f"error: Unknown schema {schema!r}.{hint} Run `yente-cli ref schemas` for the list.",
             err=True,
         )
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     if not is_matchable_schema(schema):
         options = ", ".join(matchable_schemata()[:6])
@@ -938,7 +918,7 @@ def _resolve_matchable_schema(schema: str, command: str = "match") -> type[Entit
         )
         raise typer.Exit(code=2)
 
-    return cast(type[EntityInput], schema_cls)
+    return schema_cls
 
 
 def _build_entity_input(schema: str, properties: list[str], from_file: Path | None) -> EntityInput:
