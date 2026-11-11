@@ -5,17 +5,23 @@ translation, and HTTP details live in :mod:`yente_client.client`. This
 module's job is argument-parsing + output formatting.
 """
 
-import contextlib
-import difflib
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from yente_client import __version__
+from yente_client.cli._common import (
+    did_you_mean,
+    error_text,
+    matchable_entity_class,
+    unknown_schema,
+    usage_error,
+    with_client,
+)
 from yente_client.cli._deps import TyperCommand, typer
 from yente_client.cli.config import CliConfig
 from yente_client.cli.output import (
@@ -25,12 +31,10 @@ from yente_client.cli.output import (
     print_table,
     resolve_format,
 )
-from yente_client.client import Client
-from yente_client.entities import EntityInput, entity_class
+from yente_client.cli.screen import _SCREEN_EPILOG, screen_command
+from yente_client.entities import EntityInput
 from yente_client.exceptions import (
     APIError,
-    ConfigurationError,
-    TransportError,
     YenteError,
 )
 from yente_client.models import (
@@ -39,84 +43,18 @@ from yente_client.models import (
     Dataset,
     Entity,
     ProgramIssuer,
+    StatusResponse,
 )
 from yente_client.schemas import (
     describe_schema,
     has_schema,
-    is_matchable_schema,
     iter_properties,
-    matchable_schemata,
     model,
     schema_index,
     type_values,
 )
 
 _FORMAT_HELP = "Output format. `auto` (default) renders a table on a TTY and JSON when piped."
-
-
-# ----- error handling + suggestions -----
-
-
-def _exit_code_for(exc: YenteError) -> int:
-    """Map a ``YenteError`` to the CLI exit code."""
-    if isinstance(exc, TransportError):
-        return 4
-    if isinstance(exc, (APIError, ConfigurationError)):
-        return 3
-    return 3
-
-
-def _emit_yente_error(ctx: typer.Context, exc: YenteError) -> None:
-    """Render a YenteError as a clean one-line message to stderr.
-
-    ``-v`` / ``--verbose`` (read from ``ctx.obj.verbose``) shows the full
-    chain via the active Python traceback handler instead.
-    """
-    config: CliConfig | None = ctx.obj if isinstance(ctx.obj, CliConfig) else None
-    if config and config.verbose:
-        raise exc
-    if isinstance(exc, APIError):
-        typer.echo(f"error: {type(exc).__name__} ({exc.status_code}): {exc.detail}", err=True)
-    else:
-        typer.echo(f"error: {type(exc).__name__}: {exc}", err=True)
-
-
-@contextlib.contextmanager
-def _with_client(ctx: typer.Context) -> Iterator[Client]:
-    """Context manager that builds a Client and converts SDK errors to clean exits.
-
-    Wraps each endpoint command. ``YenteError`` subclasses are rendered as a
-    one-line stderr message and re-raised as ``typer.Exit`` with the right
-    exit code. ``-v`` / ``--verbose`` short-circuits to the original
-    traceback for debugging.
-    """
-    config: CliConfig = ctx.obj
-    try:
-        with config.make_client() as client:
-            yield client
-    except YenteError as exc:
-        _emit_yente_error(ctx, exc)
-        raise typer.Exit(code=_exit_code_for(exc)) from exc
-
-
-def _suggest_schema(name: str) -> str | None:
-    """Return the closest valid FtM schema name, or ``None`` if no close match."""
-    valid = list(model["schemata"].keys())
-    matches = difflib.get_close_matches(name, valid, n=1, cutoff=0.6)
-    return matches[0] if matches else None
-
-
-def _suggest_property(schema: str, prop_name: str) -> str | None:
-    """Return the closest valid property name for ``schema``, or ``None``."""
-    try:
-        valid = list(iter_properties(schema))
-    except KeyError:
-        return None
-    matches = difflib.get_close_matches(prop_name, valid, n=1, cutoff=0.6)
-    return matches[0] if matches else None
-
-
-# ----- shared helpers -----
 
 
 # ----- status (the catch-all "is everything wired up?" view) -----
@@ -165,17 +103,17 @@ def _gather_status(config: CliConfig) -> dict[str, Any]:
 
     try:
         with config.make_client() as client:
-            liveness = _timed_probe(client, "/healthz")
-            readiness = _timed_probe(client, "/readyz")
+            liveness = _timed_probe(client.healthz)
+            readiness = _timed_probe(client.readyz)
             try:
                 listing = client.datasets()
                 loaded = [d for d in listing.datasets if d.load]
             except YenteError as exc:
-                datasets_error = _format_error(exc)
+                datasets_error = error_text(exc)
     except YenteError as exc:
         # The Client itself couldn't even be used (transport error before any
         # request reaches the server). Fall through with the empty defaults.
-        datasets_error = _format_error(exc)
+        datasets_error = error_text(exc)
         liveness = _err_dict(exc)
         readiness = _err_dict(exc)
 
@@ -211,13 +149,12 @@ def _gather_status(config: CliConfig) -> dict[str, Any]:
     return summary
 
 
-def _timed_probe(client: Client, path: str) -> dict[str, Any]:
-    """Time a GET to ``path``; return ``{status, elapsed_ms}`` or an error dict."""
+def _timed_probe(probe: Callable[[], StatusResponse]) -> dict[str, Any]:
+    """Time a health probe; return ``{status, elapsed_ms}`` or an error dict."""
     start = time.monotonic()
     try:
-        result = client._request("GET", path)
+        status = probe().status
         elapsed_ms = round((time.monotonic() - start) * 1000)
-        status = result.get("status", "ok") if isinstance(result, dict) else "ok"
         return {"status": status, "elapsed_ms": elapsed_ms}
     except YenteError as exc:
         elapsed_ms = round((time.monotonic() - start) * 1000)
@@ -230,12 +167,6 @@ def _err_dict(exc: YenteError) -> dict[str, Any]:
     if isinstance(exc, APIError):
         return {"status": "error", "code": exc.status_code, "detail": exc.detail}
     return {"status": "error", "error": type(exc).__name__, "detail": str(exc)}
-
-
-def _format_error(exc: YenteError) -> str:
-    if isinstance(exc, APIError):
-        return f"{type(exc).__name__} ({exc.status_code}): {exc.detail}"
-    return f"{type(exc).__name__}: {exc}"
 
 
 def _render_status_table(summary: dict[str, Any]) -> None:
@@ -337,21 +268,16 @@ def datasets_command(
     for inspecting versions, freshness, and children of a specific dataset
     without piping through ``jq``.
     """
-    with _with_client(ctx) as client:
+    with with_client(ctx) as client:
         listing = client.datasets()
 
     if name is not None:
         match = next((d for d in listing.datasets if d.name == name), None)
         if match is None:
-            suggestion = difflib.get_close_matches(
-                name, [d.name for d in listing.datasets], n=1, cutoff=0.6
+            hint = did_you_mean(name, [d.name for d in listing.datasets])
+            raise usage_error(
+                f"Unknown dataset {name!r}{hint}. Run `yente-cli datasets` for the list."
             )
-            hint = f" Did you mean: {suggestion[0]}?" if suggestion else ""
-            typer.echo(
-                f"error: Unknown dataset {name!r}.{hint} Run `yente-cli datasets` for the list.",
-                err=True,
-            )
-            raise typer.Exit(code=2)
         fmt = resolve_format(format_)
         if fmt in (Format.JSON, Format.JSONL):
             print_json(match)
@@ -447,21 +373,16 @@ def programs_command(
     catalog is a public OpenSanctions data artifact — the fetch works
     regardless of ``--base-url`` and needs no API key.
     """
-    with _with_client(ctx) as client:
+    with with_client(ctx) as client:
         listing = client.programs()
 
     if key is not None:
         match = next((p for p in listing.data if p.key == key or key in p.aliases), None)
         if match is None:
-            suggestion = difflib.get_close_matches(
-                key, [p.key for p in listing.data], n=1, cutoff=0.6
+            hint = did_you_mean(key, [p.key for p in listing.data])
+            raise usage_error(
+                f"Unknown program {key!r}{hint}. Run `yente-cli programs` for the list."
             )
-            hint = f" Did you mean: {suggestion[0]}?" if suggestion else ""
-            typer.echo(
-                f"error: Unknown program {key!r}.{hint} Run `yente-cli programs` for the list.",
-                err=True,
-            )
-            raise typer.Exit(code=2)
         fmt = resolve_format(format_)
         if fmt in (Format.JSON, Format.JSONL):
             print_json(match)
@@ -552,7 +473,7 @@ def statements_command(
     Available only on the OpenSanctions API. yente does not ship the
     backing data store and returns 404 here.
     """
-    with _with_client(ctx) as client:
+    with with_client(ctx) as client:
         response = client.statements(
             dataset=dataset,
             entity_id=entity_id,
@@ -601,7 +522,7 @@ def algorithms_command(
     ``best`` is the server's canonical default — passing ``-a best`` is stable
     across algorithm version bumps.
     """
-    with _with_client(ctx) as client:
+    with with_client(ctx) as client:
         algorithms = client.algorithms()
 
     fmt = resolve_format(format_)
@@ -642,7 +563,7 @@ def fetch_command(
     returns related entities inline; pass ``--no-nested`` for a lighter
     response.
     """
-    with _with_client(ctx) as client:
+    with with_client(ctx) as client:
         entity = client.fetch(entity_id, nested=not no_nested)
 
     fmt = resolve_format(format_)
@@ -700,19 +621,7 @@ def search_command(
     Exits 1 (no results) when the query returns zero hits, so shell scripts
     can gate on `yente-cli search … && …`.
     """
-    search_kwargs: dict[str, Any] = {}
-    if datasets:
-        search_kwargs["datasets"] = datasets
-    if schema:
-        search_kwargs["schema"] = schema
-    if topics:
-        search_kwargs["topics"] = topics
-    if countries:
-        search_kwargs["countries"] = countries
-    if filter_:
-        search_kwargs["filter"] = filter_
-
-    with _with_client(ctx) as client:
+    with with_client(ctx) as client:
         response = client.search(
             q,
             limit=limit,
@@ -720,7 +629,11 @@ def search_command(
             sort=sort or None,
             fuzzy=fuzzy,
             simple=simple,
-            **search_kwargs,
+            datasets=datasets,
+            schema=schema,
+            topics=topics,
+            countries=countries,
+            filter=filter_,
         )
 
     fmt = resolve_format(format_)
@@ -839,25 +752,17 @@ def match_command(
     """
     entity = _build_entity_input(schema, properties or [], from_file)
 
-    match_kwargs: dict[str, Any] = {}
-    if datasets:
-        match_kwargs["datasets"] = datasets
-    if topics:
-        match_kwargs["topics"] = topics
-    if changed_since:
-        match_kwargs["changed_since"] = changed_since
-    if exclude_entities:
-        match_kwargs["exclude_entities"] = exclude_entities
-    if exclude_schemata:
-        match_kwargs["exclude_schemata"] = exclude_schemata
-
-    with _with_client(ctx) as client:
+    with with_client(ctx) as client:
         response = client.match(
             entity,
             threshold=threshold,
             algorithm=algorithm,
             limit=limit,
-            **match_kwargs,
+            datasets=datasets,
+            topics=topics,
+            changed_since=changed_since,
+            exclude_entities=exclude_entities,
+            exclude_schemata=exclude_schemata,
         )
 
     fmt = resolve_format(format_)
@@ -892,35 +797,6 @@ def match_command(
         raise typer.Exit(code=1)
 
 
-def _resolve_matchable_schema(schema: str, command: str = "match") -> type[EntityInput]:
-    """Resolve a schema name to its entity class; exit 2 if unknown or non-matchable.
-
-    ``command`` names the invoking subcommand in the error message.
-    """
-    try:
-        schema_cls = entity_class(schema)
-    except KeyError:
-        suggestion = _suggest_schema(schema)
-        hint = f" Did you mean: {suggestion}?" if suggestion else ""
-        typer.echo(
-            f"error: Unknown schema {schema!r}.{hint} Run `yente-cli ref schemas` for the list.",
-            err=True,
-        )
-        raise typer.Exit(code=2) from None
-
-    if not is_matchable_schema(schema):
-        options = ", ".join(matchable_schemata()[:6])
-        typer.echo(
-            f"error: Schema {schema!r} is not a matchable target for `{command}`. "
-            f"Try a matchable schema like {options}, … "
-            f"(run `yente-cli ref schemas --matchable` for the full list).",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-
-    return schema_cls
-
-
 def _build_entity_input(schema: str, properties: list[str], from_file: Path | None) -> EntityInput:
     """Construct a per-schema entity from CLI inputs.
 
@@ -929,26 +805,21 @@ def _build_entity_input(schema: str, properties: list[str], from_file: Path | No
     The resulting dict is passed to the per-schema class — Pydantic enforces
     property-name validity via ``extra="forbid"``.
     """
-    schema_cls = _resolve_matchable_schema(schema)
+    schema_cls = matchable_entity_class(schema)
 
     props: dict[str, list[str]] = {}
     if from_file is not None:
         try:
             raw: dict[str, Any] = json.loads(from_file.read_text())
         except (OSError, ValueError) as exc:
-            typer.echo(f"error: could not read {from_file}: {exc}", err=True)
-            raise typer.Exit(code=2) from exc
+            raise usage_error(f"could not read {from_file}: {exc}") from exc
         file_props = raw.get("properties") or {}
         for key, value in file_props.items():
             props[key] = value if isinstance(value, list) else [value]
 
     for spec in properties:
         if "=" not in spec:
-            typer.echo(
-                f"error: --property must be KEY=VALUE; got {spec!r}",
-                err=True,
-            )
-            raise typer.Exit(code=2)
+            raise usage_error(f"--property must be KEY=VALUE; got {spec!r}")
         key, value = spec.split("=", 1)
         props.setdefault(key, []).append(value)
 
@@ -961,12 +832,11 @@ def _build_entity_input(schema: str, properties: list[str], from_file: Path | No
         for err in exc.errors():
             if err.get("type") == "extra_forbidden" and err.get("loc"):
                 bad_prop = str(err["loc"][0])
-                close = _suggest_property(schema, bad_prop)
-                if close:
-                    suggestions.append(f"{bad_prop!r} → did you mean {close!r}?")
+                hint = did_you_mean(bad_prop, iter_properties(schema))
+                if hint:
+                    suggestions.append(f"{bad_prop!r}{hint}")
         tail = " " + "; ".join(suggestions) if suggestions else ""
-        typer.echo(f"error: invalid {schema} entity: {exc}.{tail}", err=True)
-        raise typer.Exit(code=2) from exc
+        raise usage_error(f"invalid {schema} entity: {exc}.{tail}") from exc
 
 
 # ----- ref (offline FtM model introspection) -----
@@ -1023,13 +893,7 @@ def ref_schema_command(
     property type and `deprecated` flags.
     """
     if not has_schema(name):
-        suggestion = _suggest_schema(name)
-        hint = f" Did you mean: {suggestion}?" if suggestion else ""
-        typer.echo(
-            f"error: Unknown schema {name!r}.{hint} Run `yente-cli ref schemas` for the list.",
-            err=True,
-        )
-        raise typer.Exit(code=2)
+        raise usage_error(f"{unknown_schema(name)}. Run `yente-cli ref schemas` for the list.")
 
     summary = describe_schema(name)
     properties = summary["properties"]
@@ -1171,10 +1035,6 @@ def register(app: typer.Typer) -> None:
     app.command("fetch", cls=cls, epilog=_FETCH_EPILOG)(fetch_command)
     app.command("search", cls=cls, epilog=_SEARCH_EPILOG)(search_command)
     app.command("match", cls=cls, epilog=_MATCH_EPILOG)(match_command)
-
-    # Imported here: screen.py imports shared helpers from this module, so a
-    # top-level import would be circular.
-    from yente_client.cli.screen import _SCREEN_EPILOG, screen_command
 
     app.command("screen", cls=cls, epilog=_SCREEN_EPILOG)(screen_command)
 

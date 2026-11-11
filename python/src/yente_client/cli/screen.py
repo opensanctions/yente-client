@@ -15,47 +15,36 @@ from typing import Any, TextIO
 from pydantic import ValidationError
 
 from yente_client import env
-from yente_client.cli._deps import Console, typer
-from yente_client.cli.commands import (
-    _resolve_matchable_schema,
-    _suggest_property,
-    _suggest_schema,
-    _with_client,
+from yente_client.cli._common import (
+    did_you_mean,
+    matchable_entity_class,
+    schema_problem,
+    usage_error,
+    with_client,
 )
+from yente_client.cli._deps import Console, typer
 from yente_client.client import BEST_ALGORITHM
 from yente_client.entities import EntityInput, entity_class
 from yente_client.models import MatchError, MatchResponse, ScoredEntity
-from yente_client.schemas import is_matchable_schema
+from yente_client.schemas import iter_properties
 
 # Result columns the command itself emits, in output order. `match` (the
 # threshold flag) deliberately has no prefix — `match_match` would stutter.
 _FIXED_COLUMNS = ["match_id", "match_caption", "match_score", "match", "match_topics"]
 
 
-def _usage_error(message: str) -> typer.Exit:
-    typer.echo(f"error: {message}", err=True)
-    return typer.Exit(code=2)
-
-
 def _parse_mapping(spec: str, flag: str, shape: str) -> tuple[str, str]:
     """Split a ``LEFT=RIGHT`` mapping flag value; exit 2 on malformed input."""
     left, sep, right = spec.partition("=")
     if not sep or not left or not right:
-        raise _usage_error(f"{flag} must be {shape}; got {spec!r}")
+        raise usage_error(f"{flag} must be {shape}; got {spec!r}")
     return left, right
 
 
 def _resolve_row_schema(name: str) -> type[EntityInput] | str:
     """Resolve a per-row schema name; return an error message instead of exiting."""
-    try:
-        schema_cls = entity_class(name)
-    except KeyError:
-        suggestion = _suggest_schema(name)
-        hint = f" (did you mean {suggestion!r}?)" if suggestion else ""
-        return f"unknown schema {name!r}{hint}"
-    if not is_matchable_schema(name):
-        return f"schema {name!r} is not matchable"
-    return schema_cls
+    problem = schema_problem(name)
+    return problem if problem is not None else entity_class(name)
 
 
 def _build_row_entity(
@@ -79,8 +68,7 @@ def _build_row_entity(
         for err in exc.errors():
             loc = str(err["loc"][0]) if err.get("loc") else "?"
             if err.get("type") == "extra_forbidden":
-                close = _suggest_property(schema, loc)
-                hint = f" (did you mean {close!r}?)" if close else ""
+                hint = did_you_mean(loc, iter_properties(schema))
                 problems.append(f"unknown property {loc!r}{hint}")
             else:
                 problems.append(f"{loc}: {err.get('msg', 'invalid value')}")
@@ -197,25 +185,24 @@ def screen_command(
     """
     # ---- resolve schema flags ----
     if schema is None and schema_column is None:
-        raise _usage_error("pass --schema/-s or --schema-column (or both)")
+        raise usage_error("pass --schema/-s or --schema-column (or both)")
     fixed_cls: type[EntityInput] | None = None
     if schema is not None:
-        fixed_cls = _resolve_matchable_schema(schema, command="screen")
+        fixed_cls = matchable_entity_class(schema)
 
     # ---- parse mappings ----
     in_mappings = [_parse_mapping(s, "--input/-i", "COLUMN=prop") for s in inputs or []]
     if not in_mappings:
-        raise _usage_error("pass at least one --input/-i COLUMN=prop mapping")
+        raise usage_error("pass at least one --input/-i COLUMN=prop mapping")
     out_mappings = [_parse_mapping(s, "--output/-o", "prop=COLUMN") for s in outputs or []]
 
     if fixed_cls is not None and schema_column is None:
         valid_props = set(fixed_cls.model_fields) - {"id"}
         for _, prop in in_mappings:
             if prop not in valid_props:
-                close = _suggest_property(fixed_cls.schema_, prop)
-                hint = f" Did you mean {close!r}?" if close else ""
-                raise _usage_error(
-                    f"{fixed_cls.schema_} has no property {prop!r}.{hint} "
+                hint = did_you_mean(prop, valid_props)
+                raise usage_error(
+                    f"{fixed_cls.schema_} has no property {prop!r}{hint}. "
                     f"Run `yente-cli ref schema {fixed_cls.schema_}`."
                 )
 
@@ -224,7 +211,7 @@ def screen_command(
     if input_file != "-":
         input_path = Path(input_file)
         if not input_path.is_file():
-            raise _usage_error(f"input file not found: {input_file}")
+            raise usage_error(f"input file not found: {input_file}")
 
     output_path: Path | None = None
     to_stdout = output_file == "-"
@@ -234,23 +221,23 @@ def screen_command(
         elif input_path is not None:
             output_path = input_path.with_suffix(".out.csv")
         else:
-            raise _usage_error("reading from stdin requires an explicit output file (or `-`)")
+            raise usage_error("reading from stdin requires an explicit output file (or `-`)")
         if input_path is not None and output_path.resolve() == input_path.resolve():
-            raise _usage_error(f"output would overwrite the input file: {output_path}")
+            raise usage_error(f"output would overwrite the input file: {output_path}")
 
     in_stream: TextIO = sys.stdin if input_path is None else input_path.open(newline="")
     try:
         reader = csv.DictReader(in_stream)
         header = reader.fieldnames
         if not header:
-            raise _usage_error("input has no header row")
+            raise usage_error("input has no header row")
 
         # ---- validate mappings against the header ----
         for column, _ in in_mappings:
             if column not in header:
-                raise _usage_error(f"input column {column!r} not found in {list(header)}")
+                raise usage_error(f"input column {column!r} not found in {list(header)}")
         if schema_column is not None and schema_column not in header:
-            raise _usage_error(f"--schema-column {schema_column!r} not found in {list(header)}")
+            raise usage_error(f"--schema-column {schema_column!r} not found in {list(header)}")
 
         # ---- assemble output columns ----
         fixed_columns = list(_FIXED_COLUMNS)
@@ -260,14 +247,14 @@ def screen_command(
             fixed_columns.append("match_explanation")
         clashes = sorted(set(fixed_columns + ["match_error"]) & set(header))
         if clashes:
-            raise _usage_error(
+            raise usage_error(
                 f"input column(s) {clashes} collide with result columns; "
                 "rename them in the input file"
             )
         taken = set(header) | set(fixed_columns) | {"match_error"}
         for _, column in out_mappings:
             if column in taken:
-                raise _usage_error(f"-o column {column!r} collides with an existing column")
+                raise usage_error(f"-o column {column!r} collides with an existing column")
             taken.add(column)
         fieldnames = list(header) + fixed_columns + [c for _, c in out_mappings] + ["match_error"]
 
@@ -286,13 +273,13 @@ def screen_command(
                 schema_column=schema_column,
                 in_mappings=in_mappings,
                 out_mappings=out_mappings,
-                match_kwargs=_collect_match_kwargs(
-                    datasets=datasets,
-                    topics=topics,
-                    changed_since=changed_since,
-                    exclude_entities=exclude_entities,
-                    exclude_schemata=exclude_schemata,
-                ),
+                match_kwargs={
+                    "datasets": datasets,
+                    "topics": topics,
+                    "changed_since": changed_since,
+                    "exclude_entities": exclude_entities,
+                    "exclude_schemata": exclude_schemata,
+                },
                 threshold=threshold,
                 cutoff=cutoff,
                 algorithm=algorithm,
@@ -311,11 +298,6 @@ def screen_command(
     finally:
         if input_path is not None:
             in_stream.close()
-
-
-def _collect_match_kwargs(**maybe: Any) -> dict[str, Any]:
-    """Drop unset filter flags so SDK/server defaults apply."""
-    return {key: value for key, value in maybe.items() if value}
 
 
 def _run_screen(
@@ -420,7 +402,7 @@ def _run_screen(
     stderr_console = Console(stderr=True)
     with (
         Progress(console=stderr_console, disable=not stderr_console.is_terminal) as progress,
-        _with_client(ctx) as client,
+        with_client(ctx) as client,
     ):
         task = progress.add_task("screening", total=total_rows)
 

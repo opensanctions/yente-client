@@ -72,12 +72,27 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose body lists `errors` next to a generic `detail` now carries both in
   `APIError.detail`, so the CLI and MCP tool errors say which field failed
   and why.
+- **Unknown schema names get the same suggestions everywhere.** The MCP's
+  `match_entity` and `describe(kind="schema")` list the closest schemata, as
+  unknown datasets and programs already did. CLI "did you mean" hints share
+  one format, and `screen` row errors use the same wording as `match`.
+- **`schemas.property_matchable()` takes a `PropertySpec`** instead of a raw
+  model dict.
 
 ### Added
 
 - **`Algorithm.features`** maps each scoring feature name to a new
   **`FeatureDoc`** (description, coefficient, source link), as served by
   `/algorithms`.
+- **`yente_client.__version__`**, the installed package version.
+- **`Entity.get(prop)`** returns a property's plain values, without nested
+  entities.
+- **`entities.entity_class(name)`** returns the input class for a schema
+  name, e.g. `entity_class("Person")` → `Person`.
+- **Typed views of the bundled model:** `schemas.schema_spec()`,
+  `property_specs()` (own and inherited), `all_property_specs()` and
+  `type_spec()` return frozen pydantic `SchemaSpec` / `PropertySpec` /
+  `TypeSpec` objects.
 - **Bundled model updated to followthemoney v4.11.3.** New entity classes
   `Control` and `Territory`; `Risk` gains `authority`, `program`,
   `programId` and `programUrl`; `LegalEntity` gains `cikCode`; and the

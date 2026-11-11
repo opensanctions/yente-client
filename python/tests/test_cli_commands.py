@@ -542,7 +542,7 @@ def test_match_fuzzy_suggests_property(runner) -> None:
     result = runner.invoke(app, [*_BASE_FLAGS, "match", "-s", "Person", "-p", "frstName=X"])
     assert result.exit_code == 2
     output = result.stdout + result.stderr
-    assert "firstName" in output  # suggested by _suggest_property
+    assert "firstName" in output  # suggested via did_you_mean
 
 
 def test_match_unknown_property_exits_two(runner) -> None:
