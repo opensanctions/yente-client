@@ -162,10 +162,11 @@ to find the connection to a sanctioned entity.
 - Attributes this to the birth-date mismatch and shows the matcher's
   explanation.
 
-> Observed 2026-11-04: at the default cutoff the API returns no candidates at
-> all, so the answer can't show an explanation. With `cutoff=0`, Abdul
-> El-Sayed (born 1984-10-31) comes back at 0.60 with `match: false`, scored
-> down by the birth-year and birth-day mismatch features.
+> Observed 2026-11-11: no results above the threshold, but Abdul El-Sayed
+> (born 1984-10-31) comes back among the near misses at 0.60 with
+> `match: false`, scored down by the birth-year and birth-day mismatch
+> features. Two Egyptian senators sharing "El" and "Sayed" are near misses
+> too.
 
 #### 6b. 1984-01-05
 
@@ -319,9 +320,10 @@ PEP. Check his declaration.
 - Flags the contradiction for review rather than deciding whether the
   applicant misstated his status.
 
-> Observed 2026-11-04: Abdul El-Sayed matches at 1.0 on name and birth date,
-> with the Politician and PEP topics. His record has no positions, so the
-> PEP status rests on the topic alone.
+> Observed 2026-11-11: Abdul El-Sayed matches at 1.0 on name and birth date,
+> with the Politician and PEP topics. His one position is United States
+> senator, starting 2027-01-03, from Wikidata only and first seen
+> 2026-11-05, so the PEP status rests on a future, crowd-sourced occupancy.
 
 ### 17. Risk listing without a sanction
 
