@@ -27,11 +27,11 @@ async def call_tools(
         downstream.append(request)
         return httpx.Response(404, json={"detail": "Not found"})
 
+    monkeypatch.setattr(server, "API_KEY", api_key)
     monkeypatch.setattr(
         server,
         "_base_client",
         AsyncClient(
-            api_key=api_key,
             base_url="https://yente.test",
             transport=httpx.MockTransport(handler),
         ),
@@ -87,3 +87,10 @@ async def test_each_call_forwards_its_own_token(monkeypatch: pytest.MonkeyPatch)
         "ApiKey key-b",
         "ApiKey server-key",
     ]
+
+
+async def test_tool_without_any_key_sends_no_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downstream = await call_tools(monkeypatch, [({}, *_FETCH)])
+    assert "authorization" not in downstream[0].headers

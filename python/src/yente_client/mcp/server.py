@@ -74,9 +74,9 @@ BASE_URL = env.base_url()
 # Fallback API key for the whole server, used when a request carries no bearer
 # token — lets you run yente-mcp locally against a real API for testing.
 API_KEY = env.api_key()
-# One client, and so one connection pool, for every tool call. Calls with a
-# bearer token reach the API through a key-specific view of it.
-_base_client = AsyncClient(api_key=API_KEY, base_url=BASE_URL, app_name="yente-mcp")
+# One client, and so one connection pool, for every tool call. It carries no
+# key: _resolve_client() picks one per request.
+_base_client = AsyncClient(base_url=BASE_URL, app_name="yente-mcp")
 
 mcp: FastMCP = FastMCP(
     # name and instructions default to "yente" / the stock copy, but a self-hosted
@@ -104,7 +104,9 @@ def _resolve_client() -> AsyncClient:
     """
     # FastMCP leaves credential headers out unless they are asked for by name.
     headers = get_http_headers(include={"authorization"})
-    api_key = parse_bearer(headers.get("authorization"))
+    # The caller's own key wins. The server key applies only to requests with
+    # no bearer token, so a caller never screens on the server's account.
+    api_key = parse_bearer(headers.get("authorization")) or API_KEY
     if api_key is None:
         return _base_client
     return _base_client.with_api_key(api_key)
