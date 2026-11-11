@@ -3,6 +3,18 @@
     {
       "name": "logic-v2",
       "description": "Logic-based scoring v2",
+      "features": {
+        "name_match": {
+          "description": "Match two entities by analyzing and comparing their names.",
+          "coefficient": 1.0,
+          "url": "https://github.com/opensanctions/nomenklatura/blob/main/nomenklatura/matching/logic_v2/names/match.py"
+        },
+        "dob_year_disjoint": {
+          "description": "The birth date of the two entities is not the same.",
+          "coefficient": -0.1,
+          "url": "https://github.com/opensanctions/nomenklatura/blob/main/nomenklatura/matching/compare/dates.py"
+        }
+      },
       "docs": {"name_match": "Compares names and aliases"}
     },
     {

@@ -16,17 +16,19 @@ credits a merged entity can't give, so it has its own tool, built by
 :func:`text_entries` from the statement store.
 
 Topic labels sit inline on each entity: they're the risk signal, and a label
-next to its code gets used where a separate legend gets skipped. All other
-codes — countries, dataset and program keys, property names — resolve through
-one ``legend`` per response, built by walking the finished output
-(:func:`collect_codes`, :func:`build_legend`).
+next to its code gets used where a separate legend gets skipped. Every other
+code — schemata, property names, enum values such as countries and languages,
+dataset and program keys, match features — resolves through one ``legend``
+per response, built by walking the finished output (:func:`collect_codes`,
+:func:`build_legend`). The legend also says which index build answered
+(``freshness``) and how to link to an entity (``links``).
 
 Pure functions over the SDK response models — no FastMCP, unit-testable.
 """
 
 import functools
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -36,6 +38,7 @@ from yente_client import schemas
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
+    AlgorithmsResponse,
     DatasetsResponse,
     Entity,
     FeatureResult,
@@ -48,6 +51,14 @@ from yente_client.models import (
 from yente_client.schemas import model
 
 Level = Literal["stub", "summary"]
+
+# A property's (label, type, range); range is the target schema of an entity-typed one.
+_PropDef = tuple[str | None, str | None, str | None]
+
+WEBSITE = "https://www.opensanctions.org"
+
+# The collection whose index build every response reports as its `freshness`.
+DEFAULT_COLLECTION = "default"
 
 # Value types left out of every view. `text` / `html` are the prose served by
 # the descriptions tool; the rest is machine payload.
@@ -318,20 +329,47 @@ def page_entries(entries: list[dict[str, Any]], offset: int, budget: int) -> dic
 class LegendCodes:
     """The codes a response mentions, gathered for its legend."""
 
-    countries: set[str] = field(default_factory=set)
+    schemata: set[str] = field(default_factory=set)
+    # FtM enum type name (`country`, `language`, …) → the values met.
+    values: dict[str, set[str]] = field(default_factory=dict)
     datasets: set[str] = field(default_factory=set)
     programs: set[str] = field(default_factory=set)
-    # Property name → label, resolved where the property was met: the same name
-    # can mean different things in different schemata (`authority`).
-    properties: dict[str, str] = field(default_factory=dict)
+    # Property name → {label, type, range}, resolved where the property was met:
+    # the same name can mean different things in different schemata (`authority`).
+    properties: dict[str, dict[str, str]] = field(default_factory=dict)
+    features: set[str] = field(default_factory=set)
+
+    def add_values(self, type_name: str, values: Iterable[str | None]) -> None:
+        """Record values of an enum type found outside an entity's properties."""
+        self.values.setdefault(type_name, set()).update(v for v in values if v)
+
+    def add_properties(self, schema: str | None, names: Iterable[str]) -> None:
+        """Record property names met outside a ``properties`` dict, e.g. relation keys.
+
+        Without a ``schema``, names resolve through the cross-schema map.
+        """
+        defs = _defs_for(schema)
+        for name in names:
+            if name in defs:
+                self._add_property(name, defs[name])
+
+    def _add_property(self, name: str, prop: _PropDef) -> None:
+        label, prop_type, range_ = prop
+        if label is None or name in self.properties:
+            return
+        rec = {"label": label, "type": prop_type, "range": range_}
+        self.properties[name] = {k: v for k, v in rec.items() if v is not None}
+        if range_ is not None:
+            self.schemata.add(range_)
 
 
 def collect_codes(obj: Any) -> LegendCodes:
     """Walk a shaped response and gather every code its legend should resolve.
 
-    Reads entity dicts (``schema`` + ``properties``), and statement rows,
-    description entries and source credits (``prop`` / ``value`` /
-    ``dataset``) anywhere in the tree.
+    Reads entity dicts (``schema`` + ``properties``, plus the relation keys and
+    match ``explanation`` they carry), and statement rows, description entries
+    and source credits (``prop`` / ``value`` / ``dataset`` / ``lang``) anywhere
+    in the tree.
     """
     codes = LegendCodes()
     _walk(obj, codes)
@@ -340,28 +378,103 @@ def collect_codes(obj: Any) -> LegendCodes:
 
 def build_legend(
     codes: LegendCodes,
-    dataset_titles: Mapping[str, str],
-    program_titles: Mapping[str, str],
-    unofficial: AbstractSet[str] = frozenset(),
+    *,
+    datasets: Mapping[str, Mapping[str, Any]],
+    programs: Mapping[str, Mapping[str, Any]],
+    features: Mapping[str, str] | None = None,
+    freshness: Mapping[str, Any] | None = None,
+    links: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Resolve gathered codes into the response's ``legend``.
 
-    Country and property labels come from the bundled model; dataset and
-    program titles from the caller's live lookups. ``unofficial_datasets``
-    lists the response's datasets whose publisher isn't official — the
-    website's "Unofficial" badge. Codes without a known label are skipped and
-    empty sections omitted, so a failed lookup degrades to a thinner legend,
-    never an error.
+    Schema, property and enum-value labels come from the bundled model;
+    dataset, program and feature records from the caller's live lookups (see
+    :func:`dataset_records`, :func:`program_records`,
+    :func:`feature_descriptions`). Enum values land in one section per FtM
+    type, keyed by the type's plural (``countries``, ``languages``). Codes
+    without a known record are skipped and empty sections omitted, so a failed
+    lookup degrades to a thinner legend, never an error.
     """
-    countries = _type_vocabulary("country")
+    program_entries = {k: dict(programs[k]) for k in sorted(codes.programs) if k in programs}
+    values = {name: set(found) for name, found in codes.values.items()}
+    territories = (p.get("territory") for p in program_entries.values())
+    values.setdefault("country", set()).update(t for t in territories if t)
     sections: dict[str, Any] = {
-        "countries": _resolve(codes.countries, countries),
-        "datasets": _resolve(codes.datasets, dataset_titles),
-        "unofficial_datasets": sorted(codes.datasets & unofficial),
-        "programs": _resolve(codes.programs, program_titles),
+        "freshness": dict(freshness or {}),
+        "links": dict(links or {}),
+        "schemata": {s: _schema_record(s) for s in sorted(codes.schemata) if schemas.has_schema(s)},
         "properties": dict(sorted(codes.properties.items())),
     }
+    for type_name in sorted(values):
+        if type_name in _enum_types():
+            section = _resolve(values[type_name], _type_vocabulary(type_name))
+            sections[_enum_types()[type_name]] = section
+    sections["datasets"] = {n: dict(datasets[n]) for n in sorted(codes.datasets) if n in datasets}
+    sections["programs"] = program_entries
+    sections["features"] = _resolve(codes.features, features or {})
     return {name: section for name, section in sections.items() if section}
+
+
+def dataset_records(resp: DatasetsResponse) -> dict[str, dict[str, Any]]:
+    """Project the catalog to the per-dataset records the legend cites.
+
+    ``official`` is ``False`` for aggregators, NGOs and Wikidata (the
+    website's "Unofficial" badge), and absent for collections, which have no
+    publisher. URLs and summaries stay out to keep the legend small: website
+    pages follow the ``links`` templates, and ``describe_dataset`` serves the
+    rest.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for d in resp.datasets:
+        rec = {
+            "title": d.title,
+            "publisher": d.publisher.name if d.publisher else None,
+            "official": d.publisher.official if d.publisher else None,
+        }
+        out[d.name] = {k: v for k, v in rec.items() if v is not None}
+    return out
+
+
+def program_records(programs: list[Program]) -> dict[str, dict[str, Any]]:
+    """Project the program catalog to the per-program records the legend cites.
+
+    Like :func:`dataset_records`, without URLs: ``describe_program`` serves them.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for p in programs:
+        rec = {
+            "title": p.title,
+            "issuer": p.issuer.name if p.issuer else None,
+            "territory": p.issuer.territory if p.issuer else None,
+        }
+        out[p.key] = {k: v for k, v in rec.items() if v is not None}
+    return out
+
+
+def freshness(resp: DatasetsResponse) -> dict[str, Any] | None:
+    """Return the version and update time of the default collection, if indexed.
+
+    Every tool reports the same snapshot regardless of the dataset it was
+    scoped to: a scoped search still runs against one index build.
+    """
+    for d in resp.datasets:
+        if d.name == DEFAULT_COLLECTION:
+            rec = {"version": d.index_version or d.version, "updated_at": _timestamp(d.updated_at)}
+            return {k: v for k, v in rec.items() if v is not None} or None
+    return None
+
+
+def feature_descriptions(resp: AlgorithmsResponse) -> dict[str, str]:
+    """Map the server-default algorithm's feature names to their descriptions.
+
+    ``default`` may name an alias (``"best"``) rather than an algorithm, so an
+    unknown name falls back to the algorithm ``best`` points at.
+    """
+    by_name = {a.name: a for a in resp.algorithms}
+    algorithm = by_name.get(resp.default) or by_name.get(resp.best)
+    if algorithm is None:
+        return {}
+    return {name: doc.description for name, doc in algorithm.features.items() if doc.description}
 
 
 def program_index(programs: list[Program]) -> list[dict[str, Any]]:
@@ -554,63 +667,114 @@ def _walk(obj: Any, codes: LegendCodes) -> None:
         return
     if not isinstance(obj, dict):
         return
-    props = obj.get("properties")
     schema = obj.get("schema")
+    props = obj.get("properties")
+    for key in ("schema", "query_schema"):
+        if isinstance(obj.get(key), str):
+            codes.schemata.add(obj[key])
     if isinstance(schema, str) and isinstance(props, dict):
         codes.datasets.update(d for d in obj.get("datasets", ()) if isinstance(d, str))
-        defs = _schema_property_defs(schema) if schemas.has_schema(schema) else {}
+        defs = _defs_for(schema)
         for name, values in props.items():
-            label, prop_type = defs.get(name) or _property_defs().get(name, (None, None))
             strings = [v for v in values if isinstance(v, str)]
-            _collect_values(name, label, prop_type, strings, codes)
+            _collect_values(name, defs.get(name) or _property_defs().get(name), strings, codes)
+        # A profile's relation keys and prose counts name properties of this entity.
+        relation_keys = [p for p in PROFILE_SECTIONS if p in obj]
+        for key in ("relations", "descriptions"):
+            if isinstance(obj.get(key), dict):
+                relation_keys.extend(obj[key])
+        codes.add_properties(schema, relation_keys)
+        if isinstance(obj.get("explanation"), dict):
+            codes.features.update(obj["explanation"])
     else:
         # Statement rows, description entries and their source credits carry no
         # schema, so their property names resolve through the global map.
         if isinstance(obj.get("dataset"), str):
             codes.datasets.add(obj["dataset"])
+        if isinstance(obj.get("lang"), str):
+            codes.add_values("language", [obj["lang"]])
         if isinstance(obj.get("prop"), str):
-            label, prop_type = _property_defs().get(obj["prop"], (None, None))
             values = [obj["value"]] if isinstance(obj.get("value"), str) else []
-            _collect_values(obj["prop"], label, prop_type, values, codes)
+            _collect_values(obj["prop"], _property_defs().get(obj["prop"]), values, codes)
     for value in obj.values():
         _walk(value, codes)
 
 
 def _collect_values(
-    prop: str, label: str | None, prop_type: str | None, values: list[str], codes: LegendCodes
+    prop: str, prop_def: _PropDef | None, values: list[str], codes: LegendCodes
 ) -> None:
-    if label:
-        codes.properties.setdefault(prop, label)
-    if prop_type == "country":
-        codes.countries.update(values)
+    if prop_def is None:
+        return
+    codes._add_property(prop, prop_def)
+    prop_type = prop_def[1]
+    if prop_type in _enum_types():
+        codes.add_values(prop_type, values)
     elif prop == "programId":
         codes.programs.update(values)
 
 
+def _defs_for(schema: str | None) -> dict[str, _PropDef]:
+    """Property definitions for ``schema``, or the cross-schema map without one."""
+    if schema is not None and schemas.has_schema(schema):
+        return _schema_property_defs(schema)
+    return _property_defs()
+
+
+def _prop_def(prop: Mapping[str, Any]) -> _PropDef:
+    return (prop.get("label"), prop.get("type"), prop.get("range"))
+
+
 @functools.cache
-def _schema_property_defs(schema: str) -> dict[str, tuple[str | None, str | None]]:
-    """Property name → (label, type) for ``schema``, own and inherited."""
-    defs: dict[str, tuple[str | None, str | None]] = {}
+def _schema_property_defs(schema: str) -> dict[str, _PropDef]:
+    """Property name → definition for ``schema``, own and inherited."""
+    defs: dict[str, _PropDef] = {}
     for ancestor in model["schemata"][schema]["schemata"]:
         for name, prop in model["schemata"].get(ancestor, {}).get("properties", {}).items():
-            defs.setdefault(name, (prop.get("label"), prop.get("type")))
+            defs.setdefault(name, _prop_def(prop))
     return defs
 
 
 @functools.cache
-def _property_defs() -> dict[str, tuple[str | None, str | None]]:
-    """Property name → (label, type) across every schema; first definition wins.
+def _property_defs() -> dict[str, _PropDef]:
+    """Property name → definition across every schema; first definition wins.
 
-    Only for rows with no schema context (statement rows, description
-    entries). A few names differ between schemata — `authority` is a string on
-    Sanction but an entity on Contract — so anything with a schema uses
-    :func:`_schema_property_defs` instead.
+    Only for names with no schema context (statement rows, description
+    entries, a single relation page). A few names differ between schemata —
+    `authority` is a string on Sanction but an entity on Contract — so anything
+    with a schema uses :func:`_schema_property_defs` instead.
     """
-    defs: dict[str, tuple[str | None, str | None]] = {}
+    defs: dict[str, _PropDef] = {}
     for schema in sorted(model["schemata"]):
         for name, prop in model["schemata"][schema].get("properties", {}).items():
-            defs.setdefault(name, (prop.get("label"), prop.get("type")))
+            defs.setdefault(name, _prop_def(prop))
     return defs
+
+
+def _schema_record(schema: str) -> dict[str, Any]:
+    spec = model["schemata"][schema]
+    rec = {
+        "label": spec.get("label"),
+        "plural": spec.get("plural"),
+        "ancestors": sorted(set(spec.get("schemata", ())) - {schema}),
+    }
+    return {k: v for k, v in rec.items() if v}
+
+
+@functools.cache
+def _enum_types() -> dict[str, str]:
+    """FtM types with a value vocabulary (except topic) → their legend section name.
+
+    Topics are left out: their labels sit inline on each entity.
+    """
+    return {
+        name: str(spec.get("plural") or name).lower()
+        for name, spec in model["types"].items()
+        if spec.get("values") and name != "topic"
+    }
+
+
+def _timestamp(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
 
 
 @functools.cache

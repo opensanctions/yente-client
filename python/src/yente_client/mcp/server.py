@@ -18,7 +18,8 @@ else through one ``legend`` per response (see :mod:`~yente_client.mcp.shaping`)
 dereference mid-conversation is a tool, not a resource, since clients don't
 reliably read resources. Matching algorithms are deliberately not exposed:
 algorithm choice is a tuning detail below this server's altitude — the server
-default applies; use the SDK or CLI to experiment. Each request carries the
+default applies, and only its feature descriptions reach the legend; use the
+SDK or CLI to experiment. Each request carries the
 caller's API key as a bearer token, forwarded downstream (see
 :mod:`yente_client.mcp.auth`).
 
@@ -29,13 +30,13 @@ it stays testable without FastMCP.
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
 from mcp.types import Icon, ToolAnnotations
 from pydantic import ValidationError
 
 from yente_client import entities, env
-from yente_client._http import _client_version
+from yente_client._http import _client_version, is_opensanctions_url
 from yente_client.async_client import AsyncClient
 from yente_client.entities import EntityInput
 from yente_client.exceptions import YenteError
@@ -71,24 +72,44 @@ _STATEMENT_LIMIT = 1000
 _NEAR_MISS_LIMIT = 3
 
 # Every code in an entity-bearing result resolves in the response itself:
-# country and property labels come from the bundled model (see shaping),
-# dataset and program titles from live lookups cached below. An instruction to
+# schema, property and value labels come from the bundled model (see shaping),
+# dataset, program and scoring-feature records from live lookups cached below. An instruction to
 # "resolve codes before reporting" was routinely ignored; labels shipped with
 # the data are not — so there is no note nudging the agent, just the labels.
 #
 # 15 minutes bounds how long a newly added dataset or sanctions program stays
-# unresolvable; both catalogs change on slower cadences than that. Refreshes
+# unresolvable, and how stale the reported `freshness` can be; the catalogs
+# change on slower cadences than that. Refreshes
 # are cheap: programs.json revalidates via ETag (a 304 round-trip), and the
 # catalog is a small response (see opensanctions/yente#1202 for giving it an
 # ETag too).
 _GLOSSARY_TTL_SECONDS = 900.0
-_dataset_info_cache: tuple[float, dict[str, tuple[str | None, bool | None]]] | None = None
 _program_catalog_cache: tuple[float, list[Program]] | None = None
+_features_cache: tuple[float, dict[str, str]] | None = None
+
+
+class _CatalogInfo(NamedTuple):
+    datasets: dict[str, dict[str, Any]]
+    freshness: dict[str, Any] | None
+
+
+_catalog_info_cache: tuple[float, _CatalogInfo] | None = None
 
 BASE_URL = env.base_url()
 # Fallback API key for the whole server, used when a request carries no bearer
 # token — lets you run yente-mcp locally against a real API for testing.
 API_KEY = env.api_key()
+# Website links only resolve for data the website knows: the hosted API's.
+HOSTED = is_opensanctions_url(BASE_URL)
+_LINKS = (
+    {
+        "entity": f"{shaping.WEBSITE}/entities/{{id}}/",
+        "dataset": f"{shaping.WEBSITE}/datasets/{{name}}/",
+        "program": f"{shaping.WEBSITE}/programs/{{key}}/",
+    }
+    if HOSTED
+    else None
+)
 
 mcp: FastMCP = FastMCP(
     # name and instructions default to "yente" / the stock copy, but a self-hosted
@@ -117,38 +138,37 @@ def _resolve_client() -> AsyncClient:
     return client_for(token, BASE_URL)
 
 
-async def _dataset_info(client: AsyncClient) -> dict[str, tuple[str | None, bool | None]]:
-    """Dataset name → (title, publisher official?) from the live catalog; cached, failure-soft.
+async def _catalog_info(client: AsyncClient) -> _CatalogInfo:
+    """Dataset records and freshness from the live catalog; cached, failure-soft.
 
     On a fetch error returns the stale cache if there is one, else an empty
-    map — a missing legend must never fail a screening call. ``official`` is
-    ``None`` for collections, which have no publisher.
+    record — a missing legend must never fail a screening call.
     """
-    global _dataset_info_cache
+    global _catalog_info_cache
     now = time.monotonic()
-    if _dataset_info_cache is not None:
-        fetched_at, info = _dataset_info_cache
+    if _catalog_info_cache is not None:
+        fetched_at, info = _catalog_info_cache
         if now - fetched_at < _GLOSSARY_TTL_SECONDS:
             return info
     try:
         resp = await client.datasets()
     except YenteError:
-        return _dataset_info_cache[1] if _dataset_info_cache is not None else {}
-    info = {d.name: (d.title, d.publisher.official if d.publisher else None) for d in resp.datasets}
-    _dataset_info_cache = (now, info)
+        return _catalog_info_cache[1] if _catalog_info_cache is not None else _CatalogInfo({}, None)
+    info = _CatalogInfo(shaping.dataset_records(resp), shaping.freshness(resp))
+    _catalog_info_cache = (now, info)
     return info
 
 
-def _unofficial(info: dict[str, tuple[str | None, bool | None]]) -> set[str]:
+def _unofficial(info: _CatalogInfo) -> set[str]:
     """Names of datasets whose publisher isn't official (aggregators, NGOs, Wikidata)."""
-    return {name for name, (_, official) in info.items() if official is False}
+    return {name for name, rec in info.datasets.items() if rec.get("official") is False}
 
 
 async def _program_catalog(client: AsyncClient) -> list[Program]:
     """The sanctions-program catalog, cached process-wide (it's a global artifact).
 
     Raises ``YenteError`` on a failed fetch — describe_program wants the error;
-    the legend path wraps this in :func:`_program_titles` instead.
+    the legend path wraps this in :func:`_program_records` instead.
     """
     global _program_catalog_cache
     now = time.monotonic()
@@ -161,27 +181,55 @@ async def _program_catalog(client: AsyncClient) -> list[Program]:
     return resp.data
 
 
-async def _program_titles(client: AsyncClient) -> dict[str, str]:
-    """Program key → title; the failure-soft face of :func:`_program_catalog`."""
+async def _program_records(client: AsyncClient) -> dict[str, dict[str, Any]]:
+    """Program key → legend record; the failure-soft face of :func:`_program_catalog`."""
     try:
         catalog = await _program_catalog(client)
     except YenteError:
         return {}
-    return {p.key: p.title for p in catalog if p.title}
+    return shaping.program_records(catalog)
 
 
-async def _with_legend(out: dict[str, Any], client: AsyncClient) -> dict[str, Any]:
+async def _feature_descriptions(client: AsyncClient) -> dict[str, str]:
+    """Scoring feature name → description for the default algorithm; cached, failure-soft."""
+    global _features_cache
+    now = time.monotonic()
+    if _features_cache is not None:
+        fetched_at, features = _features_cache
+        if now - fetched_at < _GLOSSARY_TTL_SECONDS:
+            return features
+    try:
+        resp = await client.algorithms()
+    except YenteError:
+        return _features_cache[1] if _features_cache is not None else {}
+    features = shaping.feature_descriptions(resp)
+    _features_cache = (now, features)
+    return features
+
+
+async def _with_legend(
+    out: dict[str, Any], client: AsyncClient, codes: shaping.LegendCodes | None = None
+) -> dict[str, Any]:
     """Attach the response's ``legend`` for every code it mentions, and return it.
 
-    Title lookups are live (cached) and failure-soft, and only run when the
+    ``codes`` replaces the walk of ``out`` when the caller knows codes the walk
+    can't see (relation keys, a describe record's countries). Program and
+    feature lookups are live (cached), failure-soft, and only run when the
     response carries a code they resolve.
     """
-    codes = shaping.collect_codes(out)
-    info = await _dataset_info(client) if codes.datasets else {}
-    dataset_titles = {name: title for name, (title, _) in info.items() if title}
-    unofficial = _unofficial(info)
-    program_titles = await _program_titles(client) if codes.programs else {}
-    legend = shaping.build_legend(codes, dataset_titles, program_titles, unofficial)
+    if codes is None:
+        codes = shaping.collect_codes(out)
+    info = await _catalog_info(client)
+    programs = await _program_records(client) if codes.programs else {}
+    features = await _feature_descriptions(client) if codes.features else {}
+    legend = shaping.build_legend(
+        codes,
+        datasets=info.datasets,
+        programs=programs,
+        features=features,
+        freshness=info.freshness,
+        links=_LINKS,
+    )
     if legend:
         out["legend"] = legend
     return out
@@ -234,7 +282,8 @@ async def match_entity(
     hit confirmed: a high score on a fuzzy name alone is a lead, not an
     identification. When nothing clears the default cutoff, the closest
     candidates come back under `near_misses`: below cutoff, not hits, but
-    their explanations show why they fell short. `checked` echoes the scope
+    their explanations show why they fell short. `legend.features` says what
+    each explanation feature compares. `checked` echoes the scope
     that was screened. Expand a candidate with fetch_entity_by_id.
     """
     entity = _build_entity(schema, properties)
@@ -334,7 +383,8 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
     expand a candidate from match_entity / search_entities or a counterparty
     from a relation. Needs a real entity ID, not a name. Answer from this
     record rather than background knowledge, and say so where you go beyond
-    it.
+    it. To cite, fill the `legend.links` templates with an entity's `id`, a
+    dataset's name or a program's key.
 
     Prose is not here: `descriptions` counts the biography notes and
     designation reasons that exist (e.g. {"notes": 16, "reason": 21}). Call
@@ -387,9 +437,9 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     dates), then the entity's own descriptions and biography notes. Each entry
     names its `sources` (dataset, first seen); identical texts from several
     sources appear once, translations separately with their `lang`. Official
-    sources come first. Datasets in `legend.unofficial_datasets` are
-    aggregators, NGOs or crowd-edited sources rather than authorities — say so
-    when you rely on them.
+    sources come first. A dataset whose legend entry has `official: false` is
+    an aggregator, NGO or crowd-edited source rather than an authority — say
+    so when you rely on it.
 
     Long histories are paged: continue with `offset` while `next_offset` is
     set. `credits_unavailable` means the entity's own texts came from its
@@ -431,7 +481,7 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
             designations[prop] = [e for e in resp.results if isinstance(e, Entity)]
         elif isinstance(resp, YenteError):
             out["relations_unavailable"] = describe_error(resp)
-    unofficial = _unofficial(await _dataset_info(client))
+    unofficial = _unofficial(await _catalog_info(client))
     entries = shaping.text_entries(entity, statements, designations, unofficial)
     out.update(shaping.page_entries(entries, offset, _TEXT_PAGE_CHARS))
     return await _with_legend(out, client)
@@ -470,14 +520,18 @@ async def fetch_entity_relations(
                 entity_id, limit=limit or _OVERVIEW_EDGES, offset=offset
             )
             out = shaping.shape_adjacency(overview)
+            codes = shaping.collect_codes(out)
+            codes.add_properties(overview.entity.schema_, out)
         else:
             block = await client.adjacent(
                 entity_id, prop=prop, limit=limit or _PAGE_EDGES, offset=offset
             )
             out = shaping.shape_relation_page(block, entity_id)
+            codes = shaping.collect_codes(out)
+            codes.add_properties(None, [prop])
     except YenteError as exc:
         raise ToolError(describe_error(exc)) from exc
-    return await _with_legend(out, client)
+    return await _with_legend(out, client, codes)
 
 
 @mcp.tool(title="Audit entity provenance", annotations=_READ_ONLY)
@@ -576,7 +630,13 @@ async def describe_dataset(name: str | None = None) -> dict[str, Any]:
         return {"datasets": shaping.dataset_index(resp)}
     for dataset in resp.datasets:
         if dataset.name == name:
-            return dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
+            out = dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
+            codes = shaping.collect_codes(out)
+            if dataset.coverage is not None:
+                codes.add_values("country", dataset.coverage.countries)
+            if dataset.publisher is not None:
+                codes.add_values("country", [dataset.publisher.country])
+            return await _with_legend(out, client, codes)
     raise ToolError(f"Unknown dataset {name!r}. Call describe_dataset() for the catalog index.")
 
 
@@ -600,7 +660,13 @@ async def describe_program(key: str | None = None) -> dict[str, Any]:
         return {"programs": shaping.program_index(catalog)}
     for program in catalog:
         if program.key == key or key in program.aliases:
-            return program.model_dump(mode="json", exclude_none=True)
+            out = program.model_dump(mode="json", exclude_none=True)
+            codes = shaping.collect_codes(out)
+            territory = program.issuer.territory if program.issuer else None
+            codes.add_values("country", [territory, *program.target_territories])
+            if program.dataset:
+                codes.datasets.add(program.dataset)
+            return await _with_legend(out, client, codes)
     raise ToolError(f"Unknown program {key!r}. Call describe_program() for the index.")
 
 

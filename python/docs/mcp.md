@@ -75,14 +75,28 @@ Vocabulary and metadata lookups:
 | `describe_dataset` | Dataset metadata from the live catalog. |
 | `describe_program` | Sanctions-program metadata behind `programId` codes. |
 
-Results resolve their own codes. Topic labels sit inline on each entity,
-and every other code in a response (countries, datasets, sanctions programs,
-property names) resolves through a single `legend` attached to it. The
-legend's `unofficial_datasets` marks sources whose publisher isn't an official
-body (aggregators, NGOs, Wikidata), like the "Unofficial" badge on the
-website. Agents
-don't have to guess what an identifier like `crime.war` or `us_ofac_sdn`
-means.
+Results resolve their own codes, so agents don't have to guess what an
+identifier like `crime.war` or `us_ofac_sdn` means. Topic labels sit inline
+on each entity. Every other code in a response resolves through a single
+`legend` attached to it, with the same sections in every tool:
+
+- `schemata`: each schema's label, plural and ancestors, so a `Company`
+  reads as a kind of `LegalEntity`.
+- `properties`: label, value type and, for relationships, the schema they
+  point at.
+- One section per coded value type, such as `countries`, `languages` and
+  `genders`.
+- `datasets`: title, publisher and `official`. `official: false` marks a source whose publisher
+  isn't an official body (aggregators, NGOs, Wikidata), like the "Unofficial"
+  badge on the website.
+- `programs`: the sanctions programs behind `programId` codes, with title,
+  issuer and territory.
+- `features`: what each scoring feature in a match explanation compares.
+
+The legend also carries `freshness`, the version and update time of the data
+that answered, and `links`, templates for citing an entity, dataset or
+program on the OpenSanctions website. Links only appear when the server runs
+against the hosted OpenSanctions API.
 
 Every response follows the same shape:
 

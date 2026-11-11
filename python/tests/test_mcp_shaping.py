@@ -6,12 +6,17 @@ Pure functions over the SDK response models — no network, no FastMCP.
 from datetime import datetime
 
 from yente_client.mcp.shaping import (
+    LegendCodes,
     build_legend,
     collect_codes,
     dataset_index,
+    dataset_records,
+    feature_descriptions,
+    freshness,
     page_entries,
     page_info,
     program_index,
+    program_records,
     shape,
     shape_adjacency,
     shape_profile,
@@ -24,6 +29,7 @@ from yente_client.mcp.shaping import (
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
+    AlgorithmsResponse,
     Dataset,
     DatasetsResponse,
     Entity,
@@ -172,7 +178,7 @@ def test_shape_stub_gives_a_position_its_country() -> None:
     )
     rec = shape(occupancy, source_id="P1")
     assert rec["properties"]["post"][0]["properties"]["country"] == ["ru"]
-    assert collect_codes(rec).countries == {"ru"}
+    assert collect_codes(rec).values["country"] == {"ru"}
 
 
 def test_shape_stub_omits_empty_properties_and_entity_refs() -> None:
@@ -454,18 +460,22 @@ def test_legend_gathers_codes_across_the_response() -> None:
     )
     codes = collect_codes(shape_profile(entity, adjacency))
     # a country-looking registration number stays out; nested counterparties count
-    assert codes.countries == {"ru", "us", "cy"}
+    assert codes.values["country"] == {"ru", "us", "cy"}
     assert codes.datasets == {"eu_fsf", "us_ofac_sdn"}
     assert codes.programs == {"US-RUSHAR"}
     assert {"nationality", "programId", "asset"} <= codes.properties.keys()
+    assert {"Person", "Sanction", "Ownership", "Company"} <= codes.schemata
+    # relation keys of the profile resolve against the entity's own schema
+    assert codes.properties["sanctions"]["range"] == "Sanction"
+    assert codes.properties["ownershipOwner"]["type"] == "entity"
 
 
 def test_legend_labels_properties_by_their_own_schema() -> None:
     # `authority` is a string on Sanction but an entity on Contract.
     edge = shape(_sanction("s1", authority=["Council"]), source_id="P1")
     assert edge["properties"] == {"authority": ["Council"]}
-    labels = build_legend(collect_codes(edge), {}, {})["properties"]
-    assert labels["authority"] == "Authority"
+    labels = build_legend(collect_codes(edge), datasets={}, programs={})["properties"]
+    assert labels["authority"] == {"label": "Authority", "type": "string"}
 
 
 def test_legend_reads_statement_rows() -> None:
@@ -473,10 +483,12 @@ def test_legend_reads_statement_rows() -> None:
         "results": [
             {"prop": "nationality", "value": "ru", "dataset": "eu_fsf"},
             {"prop": "programId", "value": "EU-UKR", "dataset": "eu_fsf"},
+            {"prop": "name", "value": "Иван", "dataset": "eu_fsf", "lang": "rus"},
         ]
     }
     codes = collect_codes(rows)
-    assert codes.countries == {"ru"}
+    assert codes.values["country"] == {"ru"}
+    assert codes.values["language"] == {"rus"}
     assert codes.programs == {"EU-UKR"}
     assert codes.datasets == {"eu_fsf"}
 
@@ -489,13 +501,82 @@ def test_build_legend_resolves_and_omits_empty_sections() -> None:
             "datasets": ["x"],
         }
     )
-    legend = build_legend(codes, dataset_titles={"x": "Dataset X"}, program_titles={})
+    legend = build_legend(codes, datasets={"x": {"title": "Dataset X"}}, programs={})
     assert legend["countries"] == {"ru": type_values("country")["ru"]}
-    assert legend["datasets"] == {"x": "Dataset X"}
-    assert legend["properties"]["birthDate"]  # labelled from the bundled model
+    assert legend["datasets"] == {"x": {"title": "Dataset X"}}
+    assert legend["properties"]["birthDate"]["type"] == "date"
     assert "programs" not in legend
-    # failure-soft: missing titles degrade to a thinner legend
-    assert "datasets" not in build_legend(codes, {}, {})
+    assert "freshness" not in legend and "links" not in legend
+    # failure-soft: missing records degrade to a thinner legend
+    assert "datasets" not in build_legend(codes, datasets={}, programs={})
+
+
+def test_legend_describes_schemata_with_ancestors() -> None:
+    codes = collect_codes({"schema": "Person", "properties": {}})
+    person = build_legend(codes, datasets={}, programs={})["schemata"]["Person"]
+    assert person["label"] == "Person"
+    assert {"LegalEntity", "Thing"} <= set(person["ancestors"])
+    assert "Person" not in person["ancestors"]
+
+
+def test_legend_names_value_sections_by_type_plural() -> None:
+    codes = collect_codes(
+        {"schema": "Person", "properties": {"gender": ["male"], "nationality": ["ru"]}}
+    )
+    legend = build_legend(codes, datasets={}, programs={})
+    assert legend["genders"] == {"male": type_values("gender")["male"]}
+    assert "ru" in legend["countries"]
+    # topics resolve inline on the entity, never in the legend
+    assert "topics" not in legend
+
+
+def test_legend_resolves_features_present_in_explanations() -> None:
+    candidate = ScoredEntity(
+        id="Q1",
+        caption="Jane",
+        schema="Person",
+        properties={},
+        score=0.9,
+        match=True,
+        explanations={"name_match": FeatureResult(score=0.9)},
+    )
+    codes = collect_codes({"results": [shape_scored(candidate)]})
+    assert codes.features == {"name_match"}
+    features = {"name_match": "Compares names", "dob_year_disjoint": "Birth years differ"}
+    legend = build_legend(codes, datasets={}, programs={}, features=features)
+    assert legend["features"] == {"name_match": "Compares names"}
+
+
+def test_legend_carries_freshness_and_links() -> None:
+    legend = build_legend(
+        LegendCodes(),
+        datasets={},
+        programs={},
+        freshness={"version": "v1"},
+        links={"entity": "https://example.org/{id}"},
+    )
+    assert legend == {
+        "freshness": {"version": "v1"},
+        "links": {"entity": "https://example.org/{id}"},
+    }
+
+
+def test_legend_programs_add_their_territory() -> None:
+    codes = collect_codes({"prop": "programId", "value": "US-RUSHAR"})
+    programs = program_records(
+        [
+            Program(
+                key="US-RUSHAR", title="Russia", issuer=ProgramIssuer(name="OFAC", territory="us")
+            )
+        ]
+    )
+    legend = build_legend(codes, datasets={}, programs=programs)
+    assert legend["programs"]["US-RUSHAR"] == {
+        "title": "Russia",
+        "issuer": "OFAC",
+        "territory": "us",
+    }
+    assert "us" in legend["countries"]
 
 
 def test_shape_profile_counts_prose_left_out() -> None:
@@ -607,22 +688,31 @@ def test_page_entries_respects_budget_and_marks_the_end() -> None:
     assert huge["returned"] == 1  # an oversized entry still fills a page
 
 
-def test_legend_marks_unofficial_datasets_present() -> None:
-    codes = collect_codes(
-        {
-            "results": [
-                {
-                    "prop": "notes",
-                    "text": "t",
-                    "sources": [{"dataset": "wikidata", "first_seen": None}],
-                }
-            ]
-        }
-    )
-    assert codes.datasets == {"wikidata"}
-    legend = build_legend(codes, {"wikidata": "Wikidata"}, {}, unofficial={"wikidata", "absent"})
-    assert legend["unofficial_datasets"] == ["wikidata"]
-    assert "unofficial_datasets" not in build_legend(codes, {}, {}, unofficial={"absent"})
+def test_dataset_records_mark_officialness_without_urls(load_fixture) -> None:
+    catalog = DatasetsResponse.model_validate(load_fixture("catalog"))
+    records = dataset_records(catalog)
+    assert records["us_ofac_sdn"] == {
+        "title": "US OFAC Specially Designated Nationals",
+        "publisher": "Office of Foreign Assets Control",
+        "official": True,
+    }
+    assert "official" not in records["sanctions"]  # a collection has no publisher
+
+
+def test_freshness_reports_the_default_collection(load_fixture) -> None:
+    catalog = DatasetsResponse.model_validate(load_fixture("catalog"))
+    fresh = freshness(catalog)
+    assert fresh is not None
+    assert fresh["version"] == catalog.datasets[0].index_version
+    assert fresh["updated_at"].startswith("2026-05-30")
+    assert freshness(DatasetsResponse(datasets=[])) is None
+
+
+def test_feature_descriptions_follow_the_default_alias(load_fixture) -> None:
+    resp = AlgorithmsResponse.model_validate(load_fixture("algorithms"))
+    features = feature_descriptions(resp)
+    assert features["name_match"].startswith("Match two entities")
+    assert "dob_year_disjoint" in features
 
 
 def test_program_index_projects_compact_fields() -> None:

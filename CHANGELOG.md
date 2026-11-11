@@ -18,14 +18,34 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `relations_unavailable`. Prose (biography notes, sanction and risk
   reasons) moves to the new `fetch_entity_descriptions` tool, which credits
   each text to its source dataset, puts official sources first and pages long
-  histories. The response legend marks unofficial sources in
-  `unofficial_datasets`. Match candidates carry the compared values
+  histories. Match candidates carry the compared values
   behind each scoring feature. `match_entity` gains `cutoff` and returns
   `near_misses` when nothing clears the default cutoff.
   `fetch_entity_statements` gains `sort` and reports `last_seen`. Every
-  response resolves its codes through one `legend` and pages lists with
-  `next_offset`. Shown properties are now chosen per schema, so vessels
-  show their IMO number and flag.
+  response pages lists with `next_offset`. Shown properties are now chosen
+  per schema, so vessels show their IMO number and flag.
+- **One MCP `legend` contract across every tool.** Every entity-bearing
+  response, and the single-record views of `describe_dataset` and
+  `describe_program`, decodes all of its codes in one `legend`:
+  - schemata, with label, plural and ancestors
+  - properties, with label, type and range, including relation keys
+  - enum values, one section per FtM type (`countries`, `languages`,
+    `genders`)
+  - datasets, with title, publisher and `official`
+  - sanctions programs, with title, issuer and territory
+  - the match explanation's scoring features, with descriptions
+  
+  The legend also reports `freshness`, the default collection's index
+  version and update time, and `links`: templates for citing an entity,
+  dataset or program on the OpenSanctions website, present only against the
+  hosted API. Topic labels stay
+  inline on each entity.
+
+### Added
+
+- **`Algorithm.features`** maps each scoring feature name to a new
+  **`FeatureDoc`** (description, coefficient, source link), as served by
+  `/algorithms`.
 
 ## [0.2.0] - 2026-07-23
 
