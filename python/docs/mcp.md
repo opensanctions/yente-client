@@ -42,17 +42,18 @@ self-hosted yente, no key is needed at all.
 
 ## Serving from your own app
 
-To serve the MCP server from an existing ASGI app, add the app that
-`mcp.http_app()` returns and run its lifespan. `configure()` sets where the
-tools send their API calls; with an `httpx.ASGITransport` over the API's own
-app, they reach it in-process:
+To serve the MCP server from an existing ASGI app, build it with
+`create_server()`, mount the app that `http_app()` returns and run its
+lifespan. `create_server()` takes where the tools send their API calls; with
+an `httpx.ASGITransport` over the API's own app, they reach it in-process:
 
 ```python
 import httpx
-from yente_client.mcp import server
+from yente_client.mcp.server import create_server
 
-server.configure(base_url="http://api.internal", transport=httpx.ASGITransport(app=api_app))
-mcp_app = server.mcp.http_app(path="/mcp", stateless_http=True, json_response=True)
+mcp = create_server(base_url="http://api.internal", transport=httpx.ASGITransport(app=api_app))
+mcp_app = mcp.http_app(path="/", stateless_http=True, json_response=True)
+api_app.mount("/mcp", mcp_app)
 ```
 
 ## Connecting a client

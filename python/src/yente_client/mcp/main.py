@@ -7,8 +7,8 @@ Runs the FastMCP server. Defaults to streamable-HTTP (the v1 deliverable);
 Config (all overridable by flag): ``YENTE_MCP_TRANSPORT`` (http|stdio),
 ``YENTE_MCP_HOST``, ``YENTE_MCP_PORT``, ``YENTE_BASE_URL`` (the yente the server
 forwards calls to), and ``OPENSANCTIONS_API_KEY`` (fallback key used when a
-request carries no bearer token) — the latter two read in
-:mod:`yente_client.mcp.server`.
+request carries no bearer token) — the latter two read by
+:func:`yente_client.mcp.server.create_server`.
 
 Branding for self-hosted deployments: ``YENTE_MCP_NAME`` and
 ``YENTE_MCP_INSTRUCTIONS`` override the name and description advertised to MCP
@@ -44,7 +44,9 @@ def main() -> None:
     args = parser.parse_args()
 
     # Imported lazily so `--help` works without FastMCP installed.
-    from yente_client.mcp.server import mcp
+    from yente_client.mcp.server import create_server
+
+    mcp = create_server()
 
     if args.transport == "stdio":
         mcp.run(transport="stdio")

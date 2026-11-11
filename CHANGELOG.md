@@ -10,10 +10,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **`yente_client.mcp.server.configure()`** — set the API root and an httpx
-  transport for the MCP tools' API calls. An API that serves the MCP server
-  itself passes an `httpx.ASGITransport` over its own app, so tool calls reach
-  it in-process and still pass its authentication and metering.
+- **`yente_client.mcp.server.create_server()`** — build the MCP server with
+  its own API root, fallback API key and httpx transport for the tools' API
+  calls. An API that serves the MCP server itself passes an
+  `httpx.ASGITransport` over its own app, so tool calls reach it in-process
+  and still pass its authentication and metering.
 
 ### Fixed
 
@@ -23,6 +24,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`yente_client.mcp.server.mcp` is replaced by `create_server()`.** The
+  server no longer reads `YENTE_BASE_URL` and `OPENSANCTIONS_API_KEY` at
+  import time, and each server has its own client and catalog caches.
 - **The `mcp` extra needs `fastmcp>=4.0`** (MCP SDK 2.x). The server uses
   the SDK 2.x field names for tool annotations and icons.
 - The MCP server keeps at most 1024 API clients, one per API key and API root,
