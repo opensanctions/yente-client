@@ -5,7 +5,7 @@ Pure functions over the SDK response models — no network, no FastMCP.
 
 from datetime import datetime
 
-from yente_client.mcp.legend import build_legend, collect_codes
+from yente_client.mcp.legend import collect_codes
 from yente_client.mcp.shaping import (
     page_entries,
     page_info,
@@ -148,7 +148,7 @@ def test_shape_stub_is_identity_topics_and_featured_properties() -> None:
         "schema": "Company",
         "topics": {"sanction": type_values("topic")["sanction"]},
         "properties": {"jurisdiction": ["cy"]},  # name only repeats the caption
-        "abridged": True,
+        "abridged": 'fetch_entity_by_id("c1")',
     }
 
 
@@ -227,7 +227,7 @@ def test_shape_scored_caps_positives_but_keeps_every_negative() -> None:
     assert list(explanation) == ["pen2", "b", "d", "c", "pen1"]
 
 
-def test_shape_relation_edge_briefs_the_far_end() -> None:
+def test_shape_relation_edge_refs_the_far_end() -> None:
     asset = Entity(
         id="c1",
         caption="ACME Ltd",
@@ -256,10 +256,10 @@ def test_shape_relation_edge_briefs_the_far_end() -> None:
             "caption": "ACME Ltd",
             "schema": "Company",
             "topics": {"sanction": type_values("topic")["sanction"]},
-            "properties": {"jurisdiction": ["cy"]},
-            "datasets": ["ru_egrul"],
-            "not_shown": ["address"],
-            "abridged": True,
+            "property_count": 2,
+            "value_count": 2,
+            "dataset_count": 1,
+            "abridged": 'fetch_entity_by_id("c1")',
         }
     ]
     assert "abridged" not in rec  # the edge itself is shown in full
@@ -299,10 +299,10 @@ def test_shape_relation_page_drops_designation_captions() -> None:
     assert row["properties"] == {"program": ["Reciprocal"], "authority": ["OFAC"]}
 
 
-def test_only_stubs_and_briefs_are_marked_abridged() -> None:
+def test_only_refs_and_stubs_are_marked_abridged() -> None:
     entity = Entity(id="P1", caption="Jane", schema="Person", properties={"name": ["Jane"]})
-    assert shape(entity, "stub")["abridged"] is True
-    assert shape(entity, "brief")["abridged"] is True
+    assert shape(entity, "ref")["abridged"] == 'fetch_entity_by_id("P1")'
+    assert shape(entity, "stub")["abridged"] == 'fetch_entity_by_id("P1")'
     assert "abridged" not in shape(entity)
 
 
@@ -312,7 +312,7 @@ def test_top_level_records_keep_their_dates() -> None:
     assert profile["first_seen"] == "2022-03-01"
 
 
-def test_match_candidate_is_abridged_and_names_what_it_leaves_out() -> None:
+def test_match_candidate_is_a_ref_with_counts_and_evidence() -> None:
     scored = ScoredEntity(
         id="Q1",
         caption="Jane Doe",
@@ -329,13 +329,13 @@ def test_match_candidate_is_abridged_and_names_what_it_leaves_out() -> None:
         first_seen=datetime(2023, 1, 1),
     )
     shaped = shape_scored(scored)
-    assert shaped["abridged"] is True
-    assert shaped["datasets"] == ["us_ofac_sdn"]
-    assert shaped["properties"] == {"birthDate": ["1975-01-01"]}
-    assert shaped["not_shown"] == ["alias", "passportNumber"]
+    assert shaped["abridged"] == 'fetch_entity_by_id("Q1")'
+    assert shaped["property_count"] == 4
+    assert shaped["value_count"] == 4
+    assert shaped["dataset_count"] == 1
+    assert "properties" not in shaped and "datasets" not in shaped
     assert "first_seen" not in shaped
-    legend = build_legend(collect_codes(shaped), datasets={}, programs={})
-    assert legend["properties"]["passportNumber"]["label"] == "Passport number"
+    assert shaped["score"] == 0.9 and shaped["match"] is True
 
 
 def test_page_info_marks_truncation() -> None:
@@ -629,17 +629,18 @@ def test_unknown_name_falls_back_to_fuzzy_matches() -> None:
     assert unknown_name("program", "zzz", {"EU-UKR": "Ukraine"}).endswith("nothing close to it.")
 
 
-def test_brief_lists_names_as_not_shown() -> None:
-    aliased = Entity(
+def test_ref_counts_only_what_a_summary_would_show() -> None:
+    entity = Entity(
         id="P1",
         caption="Jane Doe",
         schema="Person",
-        properties={"name": ["Jane Doe", "J. Doe"], "birthDate": ["1970"]},
+        datasets=["a", "b"],
+        properties={
+            "name": ["Jane Doe", "J. Doe"],
+            "birthDate": ["1970"],
+            "topics": ["sanction"],  # inline, not counted
+            "notes": ["prose is served elsewhere"],
+        },
     )
-    brief = shape(aliased, "brief")
-    assert brief["properties"] == {"birthDate": ["1970"]}
-    assert brief["not_shown"] == ["name"]
-    # a stub keeps the aliases; a name that only repeats the caption is no news
-    assert shape(aliased, "stub")["properties"]["name"] == ["Jane Doe", "J. Doe"]
-    plain = Entity(id="P2", caption="Jo", schema="Person", properties={"name": ["Jo"]})
-    assert "not_shown" not in shape(plain, "brief")
+    ref = shape(entity, "ref")
+    assert (ref["property_count"], ref["value_count"], ref["dataset_count"]) == (2, 3, 2)

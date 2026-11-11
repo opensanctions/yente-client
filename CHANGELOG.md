@@ -56,13 +56,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instructions now explain the data model and the rules shared by every
   tool; `search_entities` is described as keyword browsing, never a way to
   decide whether someone is listed.
-- **MCP match candidates, search results and relationship far ends are
-  abridged.** Each carries its identifying properties (the schema's featured
-  ones, such as birth date, nationality, registration or IMO number) and its
-  datasets, marked `abridged: true`; match candidates add the match evidence.
-  `not_shown` names the properties the full record adds, including `name`
-  when there are aliases beyond the caption; `fetch_entity_by_id` returns
-  them. `search_entities`, `fetch_entity_relations` and
+- **MCP match candidates, search results and relationship far ends share
+  one abridged shape:** ID, caption, schema, topic labels, and
+  `property_count` / `value_count` / `dataset_count` for what the full record
+  holds. `abridged` names the call that returns the record, e.g.
+  `fetch_entity_by_id("Q4398633")`; match candidates add the match evidence.
+  `search_entities`, `fetch_entity_relations` and
   `fetch_entity_statements` page 10 results by default, at most 25.
 - **MCP `describe_*` tools merged into `describe(kind, name)`.** `kind` is
   one of `schema`, `topics`, `countries`, `dataset` or `program`.

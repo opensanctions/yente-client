@@ -52,7 +52,11 @@ whether someone is listed.
 
 Responses carry a `legend` with the display label of every code they contain \
 (schemata, properties, countries, datasets, programs, match features) and \
-link templates for citing an entity, dataset or program. A finding is \
+link templates for citing an entity, dataset or program. An entity marked \
+`abridged` shows only part of its record — often just its identity, topics \
+and how many properties, values and datasets the record holds; `abridged` \
+names the call that returns it in full. A field missing from it is not \
+shown, not unknown. A finding is \
 identified by its entity ID and the datasets that list it. A dataset marked \
 `official: false` is a non-authoritative source. A list whose `total` \
 exceeds what was returned is partial. Facts absent from a response are not \

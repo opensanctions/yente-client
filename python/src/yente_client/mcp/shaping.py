@@ -4,20 +4,21 @@ yente entities are large — every property, referents, nested provenance.
 Handing that raw to a model buries the signal, so every tool projects entities
 through one function, :func:`shape`, at one of three levels:
 
+- ``ref``: identity, topics and counts — ``property_count`` and
+  ``value_count`` for what the full record holds, ``dataset_count`` for how
+  many sources list it. Every entity an agent would look up next: a match
+  candidate (which adds the match evidence), a search result, and the far end
+  of a relationship (an owner, a relative).
 - ``stub``: identity, topics and the schema's FtM ``featured`` properties. The
   post of a position held, which is part of the position rather than a
   neighbour, and the designating record of a description.
-- ``brief``: stub plus datasets and ``not_shown``, the names of the properties
-  its full record adds. Every entity an agent would look up next: a search
-  result, a match candidate (which adds the match evidence), and the far end
-  of a relationship (an owner, a relative). Its record is one
-  ``fetch_entity_by_id`` call away.
 - ``summary``: datasets and every short-valued property. Relation edges and
   the record in a profile. Only a top-level record carries ``first_seen`` /
   ``last_change``; on edges the dates are noise.
 
-``stub`` and ``brief`` carry ``abridged: true``, so a missing field reads as
-"not shown" rather than "not known".
+``ref`` and ``stub`` carry ``abridged``, naming the ``fetch_entity_by_id`` call
+that returns the full record, so a missing field reads as "not shown" rather
+than "not known".
 
 Prose — properties of the FtM ``text`` type, such as ``notes`` or a sanction's
 ``reason`` — never appears in these views. It is large, and it needs per-value
@@ -56,7 +57,7 @@ from yente_client.schemas import (
     type_spec,
 )
 
-Level = Literal["stub", "brief", "summary"]
+Level = Literal["ref", "stub", "summary"]
 
 
 # Value types left out of every view. `text` / `html` are the prose served by
@@ -110,19 +111,21 @@ def shape(
     topics = _topic_labels(entity)
     if topics:
         shaped["topics"] = topics
-    if level in ("stub", "brief"):
-        props = _stub_properties(entity, names=level == "stub")
+    if level == "ref":
+        values = [v for v in _summary_values(entity).values()]
+        shaped["property_count"] = len(values)
+        shaped["value_count"] = sum(len(v) for v in values)
+        shaped["dataset_count"] = len(entity.datasets)
+        shaped["abridged"] = _fetch_call(entity.id)
+        return shaped
+    if level == "stub":
+        props = _stub_properties(entity)
         if props:
             shaped["properties"] = props
-    if level != "stub" and entity.datasets:
-        shaped["datasets"] = entity.datasets
-    if level == "brief":
-        not_shown = _not_shown(entity)
-        if not_shown:
-            shaped["not_shown"] = not_shown
-    if level != "summary":
-        shaped["abridged"] = True
+        shaped["abridged"] = _fetch_call(entity.id)
         return shaped
+    if entity.datasets:
+        shaped["datasets"] = entity.datasets
     shaped["properties"] = _properties(entity, source_id, nested)
     if source_id is None:
         for key in ("first_seen", "last_change"):
@@ -133,8 +136,8 @@ def shape(
 
 
 def shape_scored(entity: ScoredEntity) -> dict[str, Any]:
-    """Project a match candidate: a ``brief`` plus the match evidence."""
-    shaped = shape(entity, "brief")
+    """Project a match candidate: a ``ref`` plus the match evidence."""
+    shaped = shape(entity, "ref")
     shaped["score"] = entity.score
     shaped["match"] = entity.match
     shaped["explanation"] = _explanation(entity)
@@ -209,12 +212,12 @@ def shape_relation_page(
 ) -> dict[str, Any]:
     """Shape one edge type's page: paging envelope plus edges.
 
-    The far end of an ordinary relationship is a ``brief``; in a profile section
+    The far end of an ordinary relationship is a ``ref``; in a profile section
     (:data:`PROFILE_SECTIONS`) it is a ``stub``, since a position's post is
     part of the position held. Designation rows drop their caption, which
     repeats the program.
     """
-    nested: Level = "stub" if prop in PROFILE_SECTIONS else "brief"
+    nested: Level = "stub" if prop in PROFILE_SECTIONS else "ref"
     results: list[dict[str, Any]] = []
     for edge in block.results:
         if not isinstance(edge, Entity):
@@ -395,40 +398,32 @@ def _properties(entity: Entity, source_id: str | None, nested: Level) -> dict[st
     return out
 
 
-def _stub_properties(entity: Entity, *, names: bool = True) -> dict[str, list[str]]:
+def _stub_properties(entity: Entity) -> dict[str, list[str]]:
     """Pick the entity's featured, non-entity properties as plain strings.
 
-    A ``name`` that only repeats the caption is left out, and so is every
-    ``name`` without ``names``.
+    A ``name`` that only repeats the caption is left out.
     """
     out: dict[str, list[str]] = {}
     for name in _featured_names(entity.schema_):
         values = entity.get(name)
-        if name == "name" and (not names or values == [entity.caption]):
+        if name == "name" and values == [entity.caption]:
             continue
         if values:
             out[name] = values
     return out
 
 
-def _not_shown(entity: Entity) -> list[str]:
-    """Name the summary properties a brief leaves out, without their values.
+def _summary_values(entity: Entity) -> dict[str, list[Any]]:
+    """The entity's non-empty values for the properties a summary would show."""
+    allowed = _summary_names(entity.schema_)
+    return {
+        name: values for name, values in entity.properties.items() if values and name in allowed
+    }
 
-    Tells the model which facts the full record holds (a passport number, an
-    address), so it knows when a ``fetch_entity_by_id`` call would add something.
-    A brief shows no ``name`` — alias lists dominate its size, and the caption
-    carries the main one — so ``name`` is listed here when it adds more.
-    """
-    summary = _summary_names(entity.schema_)
-    shown = set(_featured_names(entity.schema_)) - {"name"}
-    return sorted(
-        name
-        for name, values in entity.properties.items()
-        if values
-        and name in summary
-        and name not in shown
-        and not (name == "name" and values == [entity.caption])
-    )
+
+def _fetch_call(entity_id: str) -> str:
+    """Name the tool call that returns an abridged entity's full record."""
+    return f"fetch_entity_by_id({json.dumps(entity_id)})"
 
 
 def _prose_values(entity: Entity) -> dict[str, list[str]]:

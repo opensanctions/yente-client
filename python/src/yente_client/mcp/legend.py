@@ -217,10 +217,9 @@ def _walk(obj: Any, codes: LegendCodes) -> None:
             strings = [v for v in values if isinstance(v, str)]
             spec = specs.get(name) or all_property_specs().get(name)
             codes.add_property_values(name, spec, strings)
-        # A profile's relation keys, prose counts and a candidate's `not_shown`
-        # name properties of this entity.
+        # A profile's relation keys and prose counts name properties of this entity.
         relation_keys = [p for p in PROFILE_SECTIONS if p in obj]
-        for key in ("relations", "descriptions", "not_shown"):
+        for key in ("relations", "descriptions"):
             if isinstance(obj.get(key), dict | list):
                 relation_keys.extend(obj[key])
         codes.add_properties(schema, relation_keys)

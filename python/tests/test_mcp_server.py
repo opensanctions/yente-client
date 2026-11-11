@@ -138,9 +138,9 @@ async def test_search_results_are_abridged(
     monkeypatch.setattr(server, "_resolve_client", lambda: client)
     out = await _call("search_entities", {"q": "Zacharov"})
     first = out["results"][0]
-    assert first["abridged"] is True
-    assert first["not_shown"] == ["firstName", "lastName"]
-    assert "firstName" not in first.get("properties", {})
+    assert first["abridged"] == f'fetch_entity_by_id("{first["id"]}")'
+    assert first["property_count"] == 2  # firstName, lastName; topics sit inline
+    assert "properties" not in first
 
 
 async def test_search_and_relation_pages_default_to_ten(

@@ -110,12 +110,11 @@ Every response follows the same shape:
   `null` means the list is complete. Search results, one relation type and
   statements page 10 at a time by default, at most 25.
 - **Entities to look up next are abridged.** Match candidates, search
-  results and the entity at the far end of a relationship carry their
-  identifying properties (such as birth date, nationality, jurisdiction or
-  IMO number), their datasets and `not_shown`, the properties their full
-  record adds, marked `abridged: true`. Names beyond the caption, such as
-  aliases and transliterations, are listed under `not_shown` rather than
-  repeated. Profiling that `id` gives the record.
+  results and the entity at the far end of a relationship carry their ID,
+  caption, schema and topic labels, plus `property_count`, `value_count` and
+  `dataset_count` for what the full record holds. `abridged` names the call
+  that returns that record, e.g. `fetch_entity_by_id("Q4398633")`. A match
+  candidate's explanation still shows the values the matcher compared.
 - **Relationship edges keep their own details** (role, share, relationship,
   dates). A position's post is part of the position held, so it keeps
   key properties such as its country. Only top-level records carry
