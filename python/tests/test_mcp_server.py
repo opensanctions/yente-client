@@ -69,11 +69,29 @@ async def test_page_size_is_capped(
 
 
 async def test_describe_topics_explains_the_codes() -> None:
-    out = await _call("describe_topics", {})
+    out = await _call("describe", {"kind": "topics"})
     assert "sanction.linked" in out["about"]
     assert out["topics"]["role.pep"]
 
 
+async def test_describe_dataset_needs_a_name() -> None:
+    with pytest.raises(ToolError, match="needs a name"):
+        await server.mcp.call_tool("describe", {"kind": "dataset"})
+
+
+async def test_describe_topics_takes_no_name() -> None:
+    with pytest.raises(ToolError, match="takes no name"):
+        await server.mcp.call_tool("describe", {"kind": "topics", "name": "sanction"})
+
+
+async def test_results_are_sent_as_text_only() -> None:
+    tools = await server.mcp.list_tools()
+    assert all(tool.output_schema is None for tool in tools)
+    result = await server.mcp.call_tool("describe", {"kind": "topics"})
+    assert result.structured_content is None
+    assert len(result.content) == 1
+
+
 async def test_unknown_dataset_suggests_close_names(use_api: None) -> None:
     with pytest.raises(ToolError, match="Unknown dataset 'ofac'. Closest: "):
-        await server.mcp.call_tool("describe_dataset", {"name": "ofac"})
+        await server.mcp.call_tool("describe", {"kind": "dataset", "name": "ofac"})

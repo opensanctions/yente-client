@@ -24,8 +24,18 @@ try:
     from fastmcp import FastMCP
     from fastmcp.exceptions import ToolError
     from fastmcp.server.dependencies import get_http_headers
+    from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools import ToolResult
 except ImportError:
     _bail("fastmcp")
 
 
-__all__ = ["FastMCP", "ToolError", "get_http_headers"]
+__all__ = [
+    "CallNext",
+    "FastMCP",
+    "Middleware",
+    "MiddlewareContext",
+    "ToolError",
+    "ToolResult",
+    "get_http_headers",
+]

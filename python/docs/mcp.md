@@ -65,15 +65,15 @@ Screening and investigation:
 | `fetch_entity_relations` | Page through one relationship type (ownership, directorships, family, …) in full. |
 | `fetch_entity_statements` | Statement-level provenance: which source asserted a value, and when (hosted API only). |
 
-Vocabulary and metadata lookups:
+`describe(kind, name)` looks up vocabulary and source metadata:
 
-| Tool | Purpose |
+| `kind` | Purpose |
 | --- | --- |
-| `describe_schema` | FtM schemata and their properties (offline, bundled model). |
-| `describe_topics` | What topic tags mean and how they filter, plus every code with its label (offline). |
-| `describe_countries` | The country vocabulary (offline). |
-| `describe_dataset` | One dataset's metadata from the live catalog, by name. |
-| `describe_program` | One sanctions program's metadata, by its `programId` key. |
+| `schema` | FtM schemata, or one schema's properties and relations by `name` (offline, bundled model). |
+| `topics` | What topic tags mean and how they filter, plus every code with its label (offline). |
+| `countries` | The country vocabulary (offline). |
+| `dataset` | One dataset's metadata from the live catalog, by `name`. |
+| `program` | One sanctions program's metadata, by its `programId` key as `name`. |
 
 Results resolve their own codes, so agents don't have to guess what an
 identifier like `crime.war` or `us_ofac_sdn` means. Topic labels sit inline

@@ -4,7 +4,7 @@ A failing tool must tell the agent *what* went wrong and *whether retrying could
 help*. The default ``str(exc)`` is not enough: httpx timeout exceptions
 stringify to ``""``, so a transient blip surfaces as an empty error body — and an
 agent that can't tell a bad argument from a network hiccup burns retries or gives
-up silently (both observed in field testing).
+up silently.
 
 The message embeds a compact ``status`` / ``retryable`` hint the agent can act
 on. Message-building is pure (no FastMCP) so it's unit-testable.

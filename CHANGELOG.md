@@ -57,6 +57,21 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instructions now explain the data model and the rules shared by every
   tool; `search_entities` is described as keyword browsing, never a way to
   decide whether someone is listed.
+- **MCP `match_entity` candidates are abridged.** Each candidate carries its
+  identifying properties (the schema's featured ones, such as birth date,
+  nationality, registration or IMO number), its datasets and the match
+  evidence, marked `abridged: true`. `not_shown` names the properties its
+  full record adds; `fetch_entity_by_id` returns them.
+- **MCP `describe_*` tools merged into `describe(kind, name)`.** `kind` is
+  one of `schema`, `topics`, `countries`, `dataset` or `program`.
+- **MCP tool results are sent as text only.** Tools declare no output
+  schema, and results no longer repeat their JSON as `structuredContent`.
+  Every tool now sets the full set of annotation hints (read-only,
+  non-destructive, idempotent, closed-world).
+- **API errors include yente's field-level validation reasons.** A 400
+  whose body lists `errors` next to a generic `detail` now carries both in
+  `APIError.detail`, so the CLI and MCP tool errors say which field failed
+  and why.
 
 ### Added
 

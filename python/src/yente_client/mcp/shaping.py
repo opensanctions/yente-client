@@ -8,10 +8,12 @@ through one function, :func:`shape`, at one of three levels:
   relative), so a sanctioned neighbour is visible; its record is one
   ``fetch_entity_by_id`` call away.
 - ``stub``: ref plus the schema's FtM ``featured`` properties. The post of a
-  position held, which is part of the position rather than a neighbour, and
-  the designating record of a description.
-- ``summary``: stub plus datasets and every short-valued property. Match and
-  search results, relation edges, and the record in a profile. Only a
+  position held, which is part of the position rather than a neighbour, the
+  designating record of a description, and a match candidate — which adds
+  datasets, the match evidence and ``not_shown``, the names of the properties
+  its full record adds.
+- ``summary``: stub plus datasets and every short-valued property. Search
+  results, relation edges, and the record in a profile. Only a
   top-level record carries ``first_seen`` / ``last_change``; on edges the
   dates are noise.
 
@@ -141,8 +143,24 @@ def shape(
 
 
 def shape_scored(entity: ScoredEntity) -> dict[str, Any]:
-    """Project a match candidate: summary plus score, match flag and explanation."""
-    shaped = shape(entity)
+    """Project a match candidate: stub plus datasets, the evidence, and what's left out.
+
+    ``not_shown`` names the summary properties the stub drops, so the model
+    sees which facts the full record holds (a passport number, an address)
+    without their values.
+    """
+    shaped = shape(entity, "stub")
+    if entity.datasets:
+        shaped["datasets"] = entity.datasets
+    summary = _property_names(entity.schema_, "summary")
+    featured = set(_featured_names(entity.schema_))
+    not_shown = sorted(
+        name
+        for name, values in entity.properties.items()
+        if values and name in summary and name not in featured
+    )
+    if not_shown:
+        shaped["not_shown"] = not_shown
     shaped["score"] = entity.score
     shaped["match"] = entity.match
     shaped["explanation"] = _explanation(entity)
@@ -455,7 +473,7 @@ def dataset_records(resp: DatasetsResponse) -> dict[str, dict[str, Any]]:
     ``official`` is ``False`` for aggregators, NGOs and Wikidata (the
     website's "Unofficial" badge), and absent for collections, which have no
     publisher. URLs and summaries stay out to keep the legend small: website
-    pages follow the ``links`` templates, and ``describe_dataset`` serves the
+    pages follow the ``links`` templates, and ``describe`` serves the
     rest.
     """
     out: dict[str, dict[str, Any]] = {}
@@ -472,7 +490,7 @@ def dataset_records(resp: DatasetsResponse) -> dict[str, dict[str, Any]]:
 def program_records(programs: list[Program]) -> dict[str, dict[str, Any]]:
     """Project the program catalog to the per-program records the legend cites.
 
-    Like :func:`dataset_records`, without URLs: ``describe_program`` serves them.
+    Like :func:`dataset_records`, without URLs: ``describe`` serves them.
     """
     out: dict[str, dict[str, Any]] = {}
     for p in programs:
@@ -696,19 +714,19 @@ def _walk(obj: Any, codes: LegendCodes) -> None:
     if not isinstance(obj, dict):
         return
     schema = obj.get("schema")
-    props = obj.get("properties")
     if isinstance(schema, str):
         codes.schemata.add(schema)
-    if isinstance(schema, str) and isinstance(props, dict):
         codes.datasets.update(d for d in obj.get("datasets", ()) if isinstance(d, str))
         defs = _defs_for(schema)
-        for name, values in props.items():
+        props = obj.get("properties")
+        for name, values in props.items() if isinstance(props, dict) else ():
             strings = [v for v in values if isinstance(v, str)]
             _collect_values(name, defs.get(name) or _property_defs().get(name), strings, codes)
-        # A profile's relation keys and prose counts name properties of this entity.
+        # A profile's relation keys, prose counts and a candidate's `not_shown`
+        # name properties of this entity.
         relation_keys = [p for p in PROFILE_SECTIONS if p in obj]
-        for key in ("relations", "descriptions"):
-            if isinstance(obj.get(key), dict):
+        for key in ("relations", "descriptions", "not_shown"):
+            if isinstance(obj.get(key), dict | list):
                 relation_keys.extend(obj[key])
         codes.add_properties(schema, relation_keys)
         if isinstance(obj.get("explanation"), dict):

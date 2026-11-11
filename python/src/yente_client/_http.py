@@ -172,6 +172,13 @@ def _extract_detail(response: httpx.Response) -> str:
         if isinstance(detail, list):
             # Pydantic validation error format: list of {msg, loc, type, ...}.
             return "; ".join(_format_detail_item(item) for item in detail)
+        # yente puts a generic title in `detail` and the specifics in `errors`:
+        # a list in pydantic's format, or a dict for FtM data errors.
+        errors = body.get("errors")
+        if isinstance(errors, list) and errors:
+            return f"{detail}: " + "; ".join(_format_detail_item(item) for item in errors)
+        if isinstance(errors, dict) and errors:
+            return f"{detail}: {errors}"
         return str(detail)
     return str(body)
 

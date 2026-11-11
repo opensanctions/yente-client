@@ -7,17 +7,16 @@ matching surface as the yente SDK, framed for an analyst rather than a caller.
 Five adapters over :class:`yente_client.AsyncClient` (``match_entity``,
 ``search_entities``, ``fetch_entity_by_id`` — an entity profile assembled from
 the record and its relations — ``fetch_entity_relations``,
-``fetch_entity_statements``) plus a set of ``describe_*`` lookup tools:
-``describe_schema``, ``describe_topics`` and ``describe_countries`` over the
-bundled FtM model, and ``describe_dataset`` / ``describe_program`` for one
-catalog record by name — the catalogs are too large to list whole. Every
+``fetch_entity_statements``) plus ``describe``, a lookup of schemata, topics
+and countries from the bundled FtM model, or of one dataset or program record
+by name — the catalogs are too large to list whole. Every
 entity-bearing result resolves its own codes — topic labels inline, everything
 else through one ``legend`` per response (see :mod:`~yente_client.mcp.shaping`)
 — so an agent never has to gloss a raw identifier. The server instructions
 (:data:`yente_client.env.DEFAULT_MCP_INSTRUCTIONS`) carry the data model and
 the rules shared by every tool; tool docstrings cover only their own tool.
 The ``ftm://schema`` resources mirror
-``describe_schema`` for resource-capable clients; anything the model must
+``describe(kind="schema")`` for resource-capable clients; anything the model must
 dereference mid-conversation is a tool, not a resource, since clients don't
 reliably read resources. Matching algorithms are deliberately not exposed:
 algorithm choice is a tuning detail below this server's altitude — the server
@@ -33,9 +32,9 @@ it stays testable without FastMCP.
 
 import asyncio
 import time
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
-from mcp.types import Icon, ToolAnnotations
+from mcp.types import CallToolRequestParams, Icon, ToolAnnotations
 from pydantic import ValidationError
 
 from yente_client import entities, env
@@ -44,7 +43,15 @@ from yente_client.async_client import AsyncClient
 from yente_client.entities import EntityInput
 from yente_client.exceptions import YenteError
 from yente_client.mcp import introspect, shaping
-from yente_client.mcp._deps import FastMCP, ToolError, get_http_headers
+from yente_client.mcp._deps import (
+    CallNext,
+    FastMCP,
+    Middleware,
+    MiddlewareContext,
+    ToolError,
+    ToolResult,
+    get_http_headers,
+)
 from yente_client.mcp.auth import client_for, resolve_api_key
 from yente_client.mcp.errors import describe_error
 from yente_client.models import (
@@ -59,8 +66,11 @@ from yente_client.models import (
 _ICON_BASE = "https://assets.opensanctions.org/images/nura"
 
 # Every tool here only reads (screens, searches, fetches, describes) — nothing
-# mutates server state — so they all share this read-only annotation.
-_READ_ONLY = ToolAnnotations(readOnlyHint=True)
+# mutates server state — so they all share this read-only annotation. They query
+# one closed database, not the open web, hence openWorldHint=False.
+_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
 
 # Page sizes. A profile shows a few edges per relationship type so hub entities
 # stay readable; the relations overview a few more; paging one type, a full page.
@@ -79,9 +89,9 @@ _NEAR_MISS_LIMIT = 3
 
 # Every code in an entity-bearing result resolves in the response itself:
 # schema, property and value labels come from the bundled model (see shaping),
-# dataset, program and scoring-feature records from live lookups cached below. An instruction to
-# "resolve codes before reporting" was routinely ignored; labels shipped with
-# the data are not — so there is no note nudging the agent, just the labels.
+# dataset, program and scoring-feature records from live lookups cached below.
+# Labels ship with the data rather than as an instruction to resolve codes:
+# agents use a label next to its code and skip a separate lookup step.
 #
 # 15 minutes bounds how long a newly added dataset or sanctions program stays
 # unresolvable, and how stale a screen's reported `as_of` can be; the catalogs
@@ -134,6 +144,27 @@ mcp: FastMCP = FastMCP(
 )
 
 
+class _TextOnly(Middleware):
+    """Send tool results as their JSON text block alone.
+
+    FastMCP mirrors any dict result into ``structuredContent``, so clients see
+    each result twice. Tools also pass ``output_schema=None``: results are
+    dynamic JSON (FtM property bags, per-response legends) that a declared
+    schema couldn't describe, and that clients would validate against it.
+    """
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[CallToolRequestParams],
+        call_next: CallNext[CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        result = await call_next(context)
+        return ToolResult(content=result.content, meta=result.meta, is_error=result.is_error)
+
+
+mcp.add_middleware(_TextOnly())
+
+
 def _resolve_client() -> AsyncClient:
     """Build (cached) an AsyncClient for this request.
 
@@ -173,7 +204,7 @@ def _unofficial(info: _CatalogInfo) -> set[str]:
 async def _program_catalog(client: AsyncClient) -> list[Program]:
     """The sanctions-program catalog, cached process-wide (it's a global artifact).
 
-    Raises ``YenteError`` on a failed fetch — describe_program wants the error;
+    Raises ``YenteError`` on a failed fetch — describe wants the error;
     the legend path wraps this in :func:`_program_records` instead.
     """
     global _program_catalog_cache
@@ -250,7 +281,9 @@ def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
     """Construct a typed input entity from a schema name + property bag."""
     schema_cls = getattr(entities, schema, None)
     if not isinstance(schema_cls, type):
-        raise ToolError(f"Unknown FtM schema {schema!r}. Call describe_schema() for the list.")
+        raise ToolError(
+            f'Unknown FtM schema {schema!r}. Call describe(kind="schema") for the list.'
+        )
     try:
         entity: EntityInput = schema_cls(**properties)
     except ValidationError as exc:
@@ -261,7 +294,7 @@ def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
 # ----- tools -----
 
 
-@mcp.tool(title="Screen against watchlists", annotations=_READ_ONLY)
+@mcp.tool(title="Screen against watchlists", annotations=_READ_ONLY, output_schema=None)
 async def match_entity(
     schema: str,
     properties: dict[str, list[str]],
@@ -285,14 +318,16 @@ async def match_entity(
     it carries any of the given codes, matched exactly: for sanctions pass
     ["sanction", "sanction.linked", "sanction.control"], for politically
     exposed persons ["role.pep", "role.rca"]. Unset, the screen covers every
-    listing. describe_topics lists every code.
+    listing. describe(kind="topics") lists every code.
 
     Each candidate has a `score` (0-1), `match` (score at or above the
     threshold) and an `explanation`: the scoring features with the query and
     candidate values each compared. A fuzzy name with nothing else agreeing is
-    a lead, not an identification — say which values agree, which conflict,
-    and what data would settle it. When no candidate clears the cutoff,
-    `near_misses` shows the closest ones and why they fell short. `checked`
+    a lead, not an identification; identifiers and dates the query lacked are
+    what would settle it. Candidates are abridged: identifying properties and
+    the evidence, with `not_shown` naming what the full record adds;
+    fetch_entity_by_id on the `id` returns it. When no candidate clears the
+    cutoff, `near_misses` shows the closest ones and why they fell short. `checked`
     echoes the scope screened and the data's `as_of` time.
 
     Args:
@@ -347,7 +382,7 @@ async def match_entity(
     return await _with_legend(out, client, codes)
 
 
-@mcp.tool(title="Search entities", annotations=_READ_ONLY)
+@mcp.tool(title="Search entities", annotations=_READ_ONLY, output_schema=None)
 async def search_entities(
     q: str,
     *,
@@ -393,7 +428,7 @@ async def search_entities(
     return await _with_legend(out, client)
 
 
-@mcp.tool(title="Profile an entity", annotations=_READ_ONLY)
+@mcp.tool(title="Profile an entity", annotations=_READ_ONLY, output_schema=None)
 async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str, Any]:
     """Profile one entity by ID: the call for "tell me about X".
 
@@ -418,9 +453,9 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
     last changed.
 
     If `relations_unavailable` is set, sanctions and relations could not be
-    read — say so rather than calling the entity unlisted. A returned `id`
-    other than the one requested means the entity was merged into another;
-    use the new ID from then on.
+    read, so their absence says nothing about a listing. A returned `id`
+    other than the one requested means the entity was merged into another,
+    and the returned ID is the current one.
 
     Args:
         full: Return the raw record instead, including `referents` (the
@@ -452,7 +487,11 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
     return await _with_legend(shaping.shape_profile(entity, adjacency, full_pages), client)
 
 
-@mcp.tool(title="Read source descriptions and designation reasons", annotations=_READ_ONLY)
+@mcp.tool(
+    title="Read source descriptions and designation reasons",
+    annotations=_READ_ONLY,
+    output_schema=None,
+)
 async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[str, Any]:
     """Read what sources write about an entity, verbatim and credited.
 
@@ -509,7 +548,7 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     return await _with_legend(out, client)
 
 
-@mcp.tool(title="Fetch entity relations", annotations=_READ_ONLY)
+@mcp.tool(title="Fetch entity relations", annotations=_READ_ONLY, output_schema=None)
 async def fetch_entity_relations(
     entity_id: str,
     *,
@@ -528,7 +567,7 @@ async def fetch_entity_relations(
     topics}, marked `abridged` — call fetch_entity_by_id on its `id` for its
     record. Page with
     `limit` (default and maximum 25) / `offset` until `next_offset` is null;
-    when you stop early, say how many exist. With no `prop`, returns every
+    `total` counts every edge, read or not. With no `prop`, returns every
     type with its total and first few edges.
     """
     if prop in shaping.HIDDEN_RELATION_PROPS:
@@ -558,7 +597,7 @@ async def fetch_entity_relations(
     return await _with_legend(out, client, codes)
 
 
-@mcp.tool(title="Audit entity provenance", annotations=_READ_ONLY)
+@mcp.tool(title="Audit entity provenance", annotations=_READ_ONLY, output_schema=None)
 async def fetch_entity_statements(
     entity_id: str,
     *,
@@ -597,23 +636,6 @@ async def fetch_entity_statements(
     return await _with_legend(shaping.shape_statements(resp), client)
 
 
-@mcp.tool(title="Describe FollowTheMoney (FtM) schema", annotations=_READ_ONLY)
-def describe_schema(schema: str | None = None) -> dict[str, Any]:
-    """Look up FtM schemata and their properties (bundled model, no API call).
-
-    Without an argument, lists the schemata match_entity accepts. With a name
-    ("Person", "Vessel"), returns its `properties` — the names match_entity
-    takes, such as `birthDate` or `imoNumber` — and its `relations`, the keys
-    fetch_entity_relations takes, with `range` the schema each points to.
-    """
-    if schema is None:
-        return {"schemata": introspect.schema_index()}
-    try:
-        return introspect.describe_schema(schema)
-    except ValueError as exc:
-        raise ToolError(str(exc)) from exc
-
-
 _TOPICS_ABOUT = (
     "Topics are tags on an entity saying why it is in the data or what kind of "
     "entity it is. Codes form dotted families: `sanction*` (listed, or owned, "
@@ -628,37 +650,54 @@ _TOPICS_ABOUT = (
     "carries any of the codes given."
 )
 
+_NAME_EXAMPLES = {"dataset": "us_ofac_sdn", "program": "US-RUSHAR"}
 
-@mcp.tool(title="Describe topic tags", annotations=_READ_ONLY)
-def describe_topics() -> dict[str, Any]:
-    """Explain the topic tags and list every code with its label.
 
-    Use to pick values for the `topics` filter of match_entity or
-    search_entities, or to understand what a family of topics covers. Topics
-    in results already carry their labels.
+@mcp.tool(title="Describe codes and sources", annotations=_READ_ONLY, output_schema=None)
+async def describe(
+    kind: Literal["schema", "topics", "countries", "dataset", "program"],
+    name: str | None = None,
+) -> dict[str, Any]:
+    """Look up the data model's vocabulary or one source record.
+
+    - `schema`: without `name`, the schemata match_entity accepts; with one
+      ("Person", "Vessel"), its `properties` — the names match_entity takes,
+      such as `birthDate` or `imoNumber` — and its `relations`, the keys
+      fetch_entity_relations takes, with `range` the schema each points to.
+    - `topics`: what the topic tags mean, and every code with its label, for
+      the `topics` filter of match_entity and search_entities.
+    - `countries`: every country and jurisdiction code with its name, for the
+      `countries` filter of search_entities (match_entity takes names).
+    - `dataset`: one source by `name` (e.g. "us_ofac_sdn", from an entity's
+      `datasets` or the legend) — publisher, summary, coverage, update times.
+    - `program`: one sanctions program by `name`, its key (e.g. "US-RUSHAR",
+      an entity's `programId`) — issuer, policy summary, measures, links.
+
+    Codes in results already resolve through the `legend`. An unknown dataset
+    or program name returns the closest matches.
     """
-    return {"about": _TOPICS_ABOUT, "topics": introspect.topic_values()}
-
-
-@mcp.tool(title="Describe country codes", annotations=_READ_ONLY)
-def describe_countries() -> dict[str, str]:
-    """List every country and jurisdiction code (code → name).
-
-    Use to pick codes for the `countries` filter of search_entities;
-    match_entity takes country names as free text. Country codes in results
-    already resolve through the `legend`.
-    """
+    if kind in ("topics", "countries") and name is not None:
+        raise ToolError(f'describe(kind="{kind}") takes no name; it lists every code.')
+    if kind in ("dataset", "program"):
+        if name is None:
+            example = _NAME_EXAMPLES[kind]
+            raise ToolError(f'describe(kind="{kind}") needs a name, e.g. "{example}".')
+        lookup = _describe_dataset if kind == "dataset" else _describe_program
+        return await lookup(name)
+    if kind == "schema":
+        if name is None:
+            return {"schemata": introspect.schema_index()}
+        try:
+            return introspect.describe_schema(name)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+    if kind == "topics":
+        return {"about": _TOPICS_ABOUT, "topics": introspect.topic_values()}
     return introspect.country_values()
 
 
-@mcp.tool(title="Describe a dataset", annotations=_READ_ONLY)
-async def describe_dataset(name: str) -> dict[str, Any]:
-    """Look up one source dataset: publisher, summary, coverage, update times.
-
-    Use for questions about a source itself, such as how current a list is or
-    who publishes it. Names (e.g. "us_ofac_sdn") come from an entity's
-    `datasets` or the legend; an unknown name returns the closest matches.
-    """
+async def _describe_dataset(name: str) -> dict[str, Any]:
+    """One dataset record from the live catalog, with its legend."""
     client = _resolve_client()
     try:
         resp = await client.datasets()
@@ -677,14 +716,8 @@ async def describe_dataset(name: str) -> dict[str, Any]:
     raise ToolError(shaping.unknown_name("dataset", name, titles))
 
 
-@mcp.tool(title="Describe a sanctions program", annotations=_READ_ONLY)
-async def describe_program(key: str) -> dict[str, Any]:
-    """Look up one sanctions program: issuer, policy summary, measures, links.
-
-    Use when the user needs a program's substance — who imposed it, why, and
-    what it restricts. Keys (e.g. "US-RUSHAR") are the `programId` values on
-    sanctioned entities; an unknown key returns the closest matches.
-    """
+async def _describe_program(key: str) -> dict[str, Any]:
+    """One sanctions program by key or alias, with its legend."""
     client = _resolve_client()
     try:
         catalog = await _program_catalog(client)
@@ -718,10 +751,10 @@ def ftm_schema(name: str) -> dict[str, Any]:
     return introspect.describe_schema(name)
 
 
-# Topic / country vocabularies are the describe_topics / describe_countries *tools*
-# above, not resources: the model needs them to pick filter values mid-conversation
-# and clients don't reliably read resources (for the same reason, dataset lookup is
-# the describe_dataset tool). Gender values ("male", "female", …) are
+# Topic / country vocabularies are served by the describe *tool* above, not
+# resources: the model needs them to pick filter values mid-conversation and
+# clients don't reliably read resources (for the same reason, dataset lookup is
+# there too). Gender values ("male", "female", …) are
 # self-explanatory, so there's no lookup for them at all. There is no yente://
 # resource for live server state: the one candidate, the algorithm catalog, is
 # deliberately unexposed (see the module docstring).

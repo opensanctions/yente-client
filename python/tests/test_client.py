@@ -222,6 +222,30 @@ def test_pydantic_style_detail_list_is_flattened() -> None:
         assert "field required" in exc.value.detail
 
 
+def test_yente_validation_errors_follow_the_title() -> None:
+    body = {
+        "detail": "1 validation error for EntityMatchQuery",
+        "errors": [
+            {
+                "loc": ["properties", "birthDate"],
+                "msg": "Invalid date",
+                "type": "value_error",
+                "input": "secret-input",
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=body)
+
+    with _client_with_handler(handler) as c:
+        with pytest.raises(BadRequestError) as exc:
+            c._request("GET", "/x")
+        assert exc.value.detail == (
+            "1 validation error for EntityMatchQuery: properties.birthDate: Invalid date"
+        )
+
+
 def test_transport_error_wraps_httpx_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")

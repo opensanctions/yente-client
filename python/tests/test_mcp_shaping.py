@@ -314,15 +314,32 @@ def test_top_level_records_keep_their_dates() -> None:
     entity = Entity(id="P1", caption="Jane", schema="Person", first_seen=datetime(2022, 3, 1))
     profile = shape_profile(entity, AdjacentResponse(entity=entity, adjacent={}))
     assert profile["first_seen"] == "2022-03-01"
+
+
+def test_match_candidate_is_abridged_and_names_what_it_leaves_out() -> None:
     scored = ScoredEntity(
         id="Q1",
-        caption="x",
+        caption="Jane Doe",
         schema="Person",
+        datasets=["us_ofac_sdn"],
+        properties={
+            "name": ["Jane Doe"],
+            "birthDate": ["1975-01-01"],
+            "alias": ["J. Doe"],
+            "passportNumber": ["X123"],
+        },
         score=0.9,
         match=True,
         first_seen=datetime(2023, 1, 1),
     )
-    assert shape_scored(scored)["first_seen"] == "2023-01-01"
+    shaped = shape_scored(scored)
+    assert shaped["abridged"] is True
+    assert shaped["datasets"] == ["us_ofac_sdn"]
+    assert shaped["properties"] == {"birthDate": ["1975-01-01"]}
+    assert shaped["not_shown"] == ["alias", "passportNumber"]
+    assert "first_seen" not in shaped
+    legend = build_legend(collect_codes(shaped), datasets={}, programs={})
+    assert legend["properties"]["passportNumber"]["label"] == "Passport number"
 
 
 def test_page_info_marks_truncation() -> None:

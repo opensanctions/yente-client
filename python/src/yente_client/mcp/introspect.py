@@ -48,7 +48,9 @@ def describe_schema(name: str) -> dict[str, Any]:
         ValueError: if ``name`` is not a schema in the bundled model.
     """
     if not has_schema(name):
-        raise ValueError(f"Unknown FtM schema {name!r}. Call describe_schema() for the index.")
+        raise ValueError(
+            f'Unknown FtM schema {name!r}. Call describe(kind="schema") for the index.'
+        )
     return schemas.describe_schema(name)
 
 
