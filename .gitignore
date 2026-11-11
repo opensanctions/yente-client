@@ -37,3 +37,6 @@ yarn-error.log*
 *.swp
 .DS_Store
 Thumbs.db
+
+# MCP use-case runs (scripts/run_mcp_cases.py)
+runs/

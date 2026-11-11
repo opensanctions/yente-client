@@ -319,3 +319,20 @@ PEP. Check his declaration.
 > Observed 2026-11-04: Abdul El-Sayed matches at 1.0 on name and birth date,
 > with the Politician and PEP topics. His record has no positions, so the
 > PEP status rests on the topic alone.
+
+### 17. Risk listing without a sanction
+
+**Prompt:** Screen <person>.
+
+Fill in someone listed on `_wikidata/oligarchs` who has a Risk record and no
+Sanction. The runner skips prompts that still contain a `<placeholder>`.
+
+**Expected query:** a matching query with no topic restriction (a
+sanctions-only screen would never return this person), then a profile of
+the candidate.
+
+**Acceptance criteria:**
+
+- Says the person is not sanctioned.
+- Reports the risk listing as a finding for review, with its source and
+  reason.
