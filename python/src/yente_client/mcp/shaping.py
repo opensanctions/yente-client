@@ -177,7 +177,7 @@ def shape_profile(entity: Entity, adjacency: AdjacentResponse) -> dict[str, Any]
     return profile
 
 
-def tool_call(name: str, **args: Any) -> str:
+def tool_call(tool: str, /, **args: Any) -> str:
     """Spell out an MCP tool call, e.g. ``fetch_entity_by_id(entity_id="Q7747")``.
 
     The form every ``abridged`` / ``next`` / ``narrative_text`` pointer takes, so
@@ -189,11 +189,11 @@ def tool_call(name: str, **args: Any) -> str:
         for key, value in args.items()
         if value is not None
     )
-    return f"{name}({parts})"
+    return f"{tool}({parts})"
 
 
 def page(
-    results: list[dict[str, Any]], total: TotalSpec, offset: int, tool: str, **args: Any
+    results: list[dict[str, Any]], total: TotalSpec, offset: int, tool: str, /, **args: Any
 ) -> dict[str, Any]:
     """Wrap one page of ``results`` in the paging envelope every list carries.
 
@@ -369,7 +369,7 @@ def text_entries(
 
 
 def page_entries(
-    entries: list[dict[str, Any]], offset: int, budget: int, tool: str, **args: Any
+    entries: list[dict[str, Any]], offset: int, budget: int, tool: str, /, **args: Any
 ) -> dict[str, Any]:
     """Page ``entries`` from ``offset`` until about ``budget`` characters of JSON.
 

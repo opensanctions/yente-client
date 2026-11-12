@@ -648,3 +648,12 @@ def test_ref_counts_only_what_a_summary_would_show() -> None:
 def test_tool_call_spells_out_set_arguments_as_json() -> None:
     call = tool_call("search_entities", q="Gazprom", schema=None, topics=["sanction"], offset=10)
     assert call == 'search_entities(q="Gazprom", topics=["sanction"], offset=10)'
+
+
+def test_tool_call_takes_any_argument_name() -> None:
+    assert tool_call("describe", kind="dataset", name="us_ofac_sdn") == (
+        'describe(kind="dataset", name="us_ofac_sdn")'
+    )
+    rows = [{"id": "x"}]
+    out = page(rows, _total(2), 0, "more", tool="t", results="r", total=1)
+    assert out["next"] == 'more(tool="t", results="r", total=1, offset=1)'
