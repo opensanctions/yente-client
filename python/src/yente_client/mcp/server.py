@@ -37,7 +37,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import AnyHttpUrl, ValidationError
+from pydantic import AnyHttpUrl, ConfigDict, TypeAdapter, ValidationError
 
 from yente_client import __version__, env, schemas
 from yente_client._http import is_opensanctions_url
@@ -206,7 +206,15 @@ def _auth() -> RemoteAuthProvider | None:
             issuer=issuer,
             audience=f"{public_url}/mcp",
         ),
-        authorization_servers=[AnyHttpUrl(issuer)],
+        # RFC 9728 clients compare the listed authorization server with the
+        # issuer in its own metadata character by character. Pydantic adds a
+        # "/" path to a bare host URL by default, which breaks that match for
+        # an issuer like "https://auth.example.org".
+        authorization_servers=[
+            TypeAdapter(
+                AnyHttpUrl, config=ConfigDict(url_preserve_empty_path=True)
+            ).validate_python(issuer)
+        ],
         base_url=public_url,
         # offline_access gets the client a refresh token.
         scopes_supported=["openid", "offline_access"],
