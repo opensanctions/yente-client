@@ -15,7 +15,17 @@ use the SDK for embedded screening and long-running services.
 ## Install
 
 ```bash
-pip install yente-client[cli]
+uvx --from 'yente-client[cli]' yente-cli --help
+```
+
+Other ways to run it:
+
+```bash
+# Install it on your PATH as a uv tool:
+uv tool install 'yente-client[cli]'
+
+# With pip, in a virtual environment:
+pip install 'yente-client[cli]'
 ```
 
 The `[cli]` extra pulls in `typer` and `rich`. Without it, `yente-cli`

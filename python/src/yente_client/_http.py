@@ -7,7 +7,6 @@ are independently testable.
 import contextlib
 import re
 import sys
-import warnings
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
@@ -99,20 +98,10 @@ def prepare_http_kwargs(
     different transport base classes (``httpx.HTTPTransport`` vs
     ``httpx.AsyncHTTPTransport``).
 
-    Side effects:
-      - Raises ``ConfigurationError`` on an invalid ``app_name``.
-      - Emits a one-shot ``UserWarning`` when no ``api_key`` is set and
-        ``base_url`` points at the OpenSanctions API.
+    Raises ``ConfigurationError`` on an invalid ``app_name``.
     """
     if app_name is not None:
         validate_app_name(app_name)
-
-    if api_key is None and is_opensanctions_url(base_url):
-        warnings.warn(
-            "Client constructed against the OpenSanctions API without an "
-            "api_key. Set api_key= or pass OPENSANCTIONS_API_KEY via env.",
-            stacklevel=3,
-        )
 
     # Caller's headers go in first; the Authorization / User-Agent set here win.
     merged_headers: dict[str, str] = dict(headers or {})

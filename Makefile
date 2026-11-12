@@ -17,7 +17,7 @@ test:
 	cd python && .venv/bin/pytest
 
 lint:
-	cd python && .venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/mypy
+	PATH=$(CURDIR)/python/.venv/bin:$$PATH prek run --all-files
 
 docs:
 	cd python && .venv/bin/mkdocs build

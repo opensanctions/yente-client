@@ -84,25 +84,6 @@ def test_api_key_sets_authorization_header() -> None:
         assert c._http.headers["Authorization"] == "ApiKey secret-key"
 
 
-def test_missing_api_key_warns_on_opensanctions_url() -> None:
-    with pytest.warns(UserWarning, match="api_key"):
-        Client().close()
-
-
-def test_missing_api_key_warns_on_opensanctions_test_url() -> None:
-    with pytest.warns(UserWarning, match="api_key"):
-        Client(base_url="https://api.test.opensanctions.org").close()
-
-
-def test_missing_api_key_does_not_warn_on_yente_instance() -> None:
-    import warnings as _warnings
-
-    with _warnings.catch_warnings():
-        _warnings.simplefilter("error")
-        # No warning expected — `error` mode would raise if one fired.
-        Client(base_url="http://yente.internal:8000").close()
-
-
 def test_caller_headers_merged_but_auth_wins() -> None:
     with Client(
         api_key="secret",
@@ -111,6 +92,23 @@ def test_caller_headers_merged_but_auth_wins() -> None:
         # Caller's X-Custom passes through; Authorization gets overwritten.
         assert c._http.headers["X-Custom"] == "value"
         assert c._http.headers["Authorization"] == "ApiKey secret"
+
+
+def test_with_api_key_sends_its_key_over_shared_connections() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["Authorization"])
+        return httpx.Response(200, json={"status": "ok"})
+
+    with Client(
+        api_key="base", headers={"X-Custom": "value"}, transport=httpx.MockTransport(handler)
+    ) as base:
+        other = base.with_api_key("other")
+        assert other._http is base._http
+        other.healthz()
+        base.healthz()
+    assert seen == ["ApiKey other", "ApiKey base"]
 
 
 def test_caller_cannot_override_user_agent_via_headers() -> None:

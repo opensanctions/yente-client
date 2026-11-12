@@ -1,9 +1,10 @@
 # Dependabot configuration.
 #
-# Two ecosystems watched:
+# Three ecosystems watched:
 #  - pip (Python deps declared in python/pyproject.toml)
+#  - pre-commit (hook revs in .pre-commit-config.yaml)
 #  - github-actions (the workflows themselves)
-# A third (npm, for the TS SDK) is stubbed out below until M6 lands.
+# A fourth (npm, for the TS SDK) is stubbed out below until M6 lands.
 #
 # Weekly cadence on Monday morning UTC. Dev/test/docs deps are grouped
 # so we get one PR per group instead of one per package — easier to
@@ -27,7 +28,6 @@ updates:
         applies-to: version-updates
         patterns:
           - pytest*
-          - ruff
           - mypy
           - respx
           - jinja2
@@ -44,6 +44,22 @@ updates:
           - pydantic*
           - typer
           - rich
+
+  # Bumps the hook revs in .pre-commit-config.yaml, including ruff.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    labels:
+      - dependencies
+      - ci
+    groups:
+      hooks:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /

@@ -6,8 +6,9 @@ Runs the FastMCP server. Defaults to streamable-HTTP (the v1 deliverable);
 
 Config (all overridable by flag): ``YENTE_MCP_TRANSPORT`` (http|stdio),
 ``YENTE_MCP_HOST``, ``YENTE_MCP_PORT``, ``YENTE_BASE_URL`` (the yente the server
-forwards calls to), and ``OPENSANCTIONS_API_KEY`` (fallback key used when a
-request carries no bearer token) — the latter two read in
+forwards calls to), ``OPENSANCTIONS_API_KEY`` (fallback key used when a
+request carries no bearer token), and ``YENTE_MCP_OAUTH_ISSUER`` /
+``YENTE_MCP_PUBLIC_URL`` (OAuth2 login) — the latter four read in
 :mod:`yente_client.mcp.server`.
 
 Branding for self-hosted deployments: ``YENTE_MCP_NAME`` and
@@ -49,7 +50,9 @@ def main() -> None:
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        mcp.run(transport="http", host=args.host, port=args.port)
+        # Stateless: any instance behind a load balancer can answer any
+        # request. The tools need no session state.
+        mcp.run(transport="http", host=args.host, port=args.port, stateless_http=True)
 
 
 if __name__ == "__main__":

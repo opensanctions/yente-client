@@ -21,8 +21,8 @@ dereference mid-conversation is a tool, not a resource, since clients don't
 reliably read resources. Matching algorithms are deliberately not exposed:
 algorithm choice is a tuning detail below this server's altitude — the server
 default applies, and only its feature descriptions reach the legend; use the
-SDK or CLI to experiment. Each request carries the
-caller's API key as a bearer token, forwarded downstream (see
+SDK or CLI to experiment. Each request carries the caller's API key, or with
+OAuth2 on its access token, as a bearer token, forwarded downstream (see
 :mod:`yente_client.mcp.auth`).
 
 Keep this module thin: the real logic lives in :mod:`yente_client.schemas` and
@@ -37,8 +37,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, Generic, Literal, TypeVar
 
-from mcp.types import CallToolRequestParams, Icon, ToolAnnotations
-from pydantic import ValidationError
+from pydantic import AnyHttpUrl, ValidationError
 
 from yente_client import __version__, env, schemas
 from yente_client._http import is_opensanctions_url
@@ -48,14 +47,19 @@ from yente_client.exceptions import YenteError
 from yente_client.mcp import legend, shaping
 from yente_client.mcp._deps import (
     CallNext,
+    CallToolRequestParams,
     FastMCP,
+    Icon,
+    JWTVerifier,
     Middleware,
     MiddlewareContext,
+    RemoteAuthProvider,
+    ToolAnnotations,
     ToolError,
     ToolResult,
     get_http_headers,
 )
-from yente_client.mcp.auth import client_for, resolve_api_key
+from yente_client.mcp.auth import parse_bearer
 from yente_client.mcp.errors import describe_error
 from yente_client.models import (
     AdjacentPropertyResponse,
@@ -74,9 +78,9 @@ _ICON_BASE = "https://assets.opensanctions.org/images/nura"
 
 # Every tool here only reads (screens, searches, fetches, describes) — nothing
 # mutates server state — so they all share this read-only annotation. They query
-# one closed database, not the open web, hence openWorldHint=False.
+# one closed database, not the open web, hence open_world_hint=False.
 _READ_ONLY = ToolAnnotations(
-    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
 )
 
 # Page sizes a caller sees. Every list a tool pages through (search results,
@@ -174,6 +178,40 @@ _LINKS = (
     else None
 )
 
+# One client, and so one connection pool, for every tool call. It carries no
+# key: _resolve_client() picks one per request.
+_base_client = AsyncClient(base_url=BASE_URL, app_name="yente-mcp")
+
+
+def _auth() -> RemoteAuthProvider | None:
+    """Make the server an OAuth2 resource server, if ``$YENTE_MCP_OAUTH_ISSUER`` is set.
+
+    The provider serves the protected resource metadata (RFC 9728) and answers
+    requests without a valid access token from the issuer with ``401`` and a
+    ``WWW-Authenticate`` header that names the metadata. A bare
+    ``JWTVerifier`` serves no metadata, so MCP clients would not find the
+    issuer. The audience is the MCP endpoint: MCP clients request it as the
+    RFC 8707 ``resource``, and the issuer puts it into the token's ``aud``.
+    """
+    issuer = env.mcp_oauth_issuer()
+    public_url = env.mcp_public_url()
+    if issuer is None:
+        return None
+    if public_url is None:
+        raise ValueError(f"{env.MCP_OAUTH_ISSUER_VAR} needs {env.MCP_PUBLIC_URL_VAR} too")
+    return RemoteAuthProvider(
+        token_verifier=JWTVerifier(
+            jwks_uri=f"{issuer}/.well-known/jwks.json",
+            issuer=issuer,
+            audience=f"{public_url}/mcp",
+        ),
+        authorization_servers=[AnyHttpUrl(issuer)],
+        base_url=public_url,
+        # offline_access gets the client a refresh token.
+        scopes_supported=["openid", "offline_access"],
+    )
+
+
 mcp: FastMCP = FastMCP(
     # name and instructions default to "yente" / the stock copy, but a self-hosted
     # deployment can rebrand both via $YENTE_MCP_NAME / $YENTE_MCP_INSTRUCTIONS.
@@ -183,11 +221,16 @@ mcp: FastMCP = FastMCP(
     icons=[
         # Full-colour brand mark first (renders on any background), favicons as
         # smaller fallbacks. Clients pick by `sizes`.
-        Icon(src=f"{_ICON_BASE}/logo-icon-color.png", mimeType="image/png", sizes=["290x310"]),
-        Icon(src=f"{_ICON_BASE}/favicon-32.png", mimeType="image/png", sizes=["32x32"]),
-        Icon(src=f"{_ICON_BASE}/favicon-16.png", mimeType="image/png", sizes=["16x16"]),
+        Icon(src=f"{_ICON_BASE}/logo-icon-color.png", mime_type="image/png", sizes=["290x310"]),
+        Icon(src=f"{_ICON_BASE}/favicon-32.png", mime_type="image/png", sizes=["32x32"]),
+        Icon(src=f"{_ICON_BASE}/favicon-16.png", mime_type="image/png", sizes=["16x16"]),
     ],
     instructions=env.mcp_instructions(),
+    # MCP clients start the OAuth2 login, and refresh an expired token, only
+    # when the MCP endpoint answers 401. So with an issuer set, the server
+    # rejects requests without a valid access token before any tool runs. This
+    # also means that _resolve_client() never falls back to the server's key.
+    auth=_auth(),
 )
 
 
@@ -213,13 +256,30 @@ mcp.add_middleware(_TextOnly())
 
 
 def _resolve_client() -> AsyncClient:
-    """Build (cached) an AsyncClient for this request.
+    """Return the API client for the current MCP request.
 
-    Uses the request's bearer token, falling back to the server's
-    ``OPENSANCTIONS_API_KEY`` (see :func:`resolve_api_key`).
+    Uses the request's bearer token. A request without one uses the server's
+    ``OPENSANCTIONS_API_KEY``, so ``yente-mcp`` runs on localhost against a
+    real API with no auth set up in the MCP client.
+
+    With OAuth2, the bearer token is the caller's access token, and the API
+    gets that same token. The MCP specification forbids this pass-through
+    ("MCP servers MUST NOT pass through the token it received from the MCP
+    client"). The rule stops an API from accepting a token that the issuer
+    made for a different service. That risk does not apply here: the server
+    and the API are one resource with one issuer, and the API operator
+    explicitly accepts the MCP endpoint as a token audience. Token exchange
+    (RFC 8693) obeys the rule, but it needs support from the issuer, a second
+    request for each call, and a client secret on the server.
     """
-    token = resolve_api_key(get_http_headers().get("authorization"), API_KEY)
-    return client_for(token, BASE_URL)
+    # FastMCP leaves credential headers out unless they are asked for by name.
+    headers = get_http_headers(include={"authorization"})
+    # The caller's own key wins. The server key applies only to requests with
+    # no bearer token, so a caller never screens on the server's account.
+    api_key = parse_bearer(headers.get("authorization")) or API_KEY
+    if api_key is None:
+        return _base_client
+    return _base_client.with_api_key(api_key)
 
 
 async def _soft(cache: _TTLCache[T], fetch: Callable[[], Awaitable[T]]) -> T | None:

@@ -8,6 +8,35 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`Algorithm.features`** maps each scoring feature name to a new
+  **`FeatureDoc`** (description, coefficient, source link), as served by
+  `/algorithms`.
+- **`yente_client.__version__`**, the installed package version.
+- **`Entity.get(prop)`** returns a property's plain values, without nested
+  entities.
+- **`entities.entity_class(name)`** returns the input class for a schema
+  name, e.g. `entity_class("Person")` → `Person`.
+- **Typed views of the bundled model:** `schemas.schema_spec()`,
+  `property_specs()` (own and inherited), `all_property_specs()` and
+  `type_spec()` return frozen pydantic `SchemaSpec` / `PropertySpec` /
+  `TypeSpec` objects.
+- **Bundled model updated to followthemoney v4.11.3.** New entity classes
+  `Control` and `Territory`; `Risk` gains `authority`, `program`,
+  `programId` and `programUrl`; `LegalEntity` gains `cikCode`; and the
+  `Topic` enum gains `corp.clone` and `geo.risk`.
+- **`Client.with_api_key()` / `AsyncClient.with_api_key()`** — get a client
+  that sends a different API key over the same connections and ETag cache.
+  Use it to serve many API keys, such as one per caller, from one connection
+  pool.
+- **OAuth2 login for `yente-mcp`.** With `YENTE_MCP_OAUTH_ISSUER` and
+  `YENTE_MCP_PUBLIC_URL` set, the server serves the protected resource
+  metadata, accepts only valid access tokens from the issuer, forwards them to
+  the API, and answers all other requests with `401`.
+- `py.typed` marker, which the `Typing :: Typed` classifier promises. Without
+  it, mypy in downstream projects skips `yente_client`.
+
 ### Changed
 
 - **MCP server output reshaped around what an analyst needs to judge a hit.**
@@ -38,7 +67,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - datasets, with title, publisher and `official`
   - sanctions programs, with title, issuer and territory
   - the match explanation's scoring features, with descriptions
-  
+
   The legend covers only codes the response contains, and is left out when
   there are none. It also carries `links`: templates for citing an entity,
   dataset or program on the OpenSanctions website, present only against the
@@ -80,25 +109,28 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one format, and `screen` row errors use the same wording as `match`.
 - **`schemas.property_matchable()` takes a `PropertySpec`** instead of a raw
   model dict.
+- **The `yente-mcp` HTTP transport is stateless**, so more than one instance
+  can serve it behind a load balancer.
+- The MCP server sends all tool calls through one API client and one
+  connection pool, whatever key the caller sends. It no longer keeps a client
+  per API key. `yente_client.mcp.auth.client_for()` and `resolve_api_key()`
+  are removed.
+- **Clients no longer warn when built without an `api_key` against the hosted
+  API.** The first call fails with `AuthenticationError` ("No API key
+  provided."), which reports the same problem.
+- **The `mcp` extra needs `fastmcp>=4.0`** (MCP SDK 2.x). The server uses
+  the SDK 2.x field names for tool annotations and icons.
+- **The missing-extra hints for `yente-cli` and `yente-mcp` show the `uvx`
+  command first**, then the `pip install` command. The docs show `uvx` as
+  the recommended way to run both tools.
 
-### Added
+### Fixed
 
-- **`Algorithm.features`** maps each scoring feature name to a new
-  **`FeatureDoc`** (description, coefficient, source link), as served by
-  `/algorithms`.
-- **`yente_client.__version__`**, the installed package version.
-- **`Entity.get(prop)`** returns a property's plain values, without nested
-  entities.
-- **`entities.entity_class(name)`** returns the input class for a schema
-  name, e.g. `entity_class("Person")` → `Person`.
-- **Typed views of the bundled model:** `schemas.schema_spec()`,
-  `property_specs()` (own and inherited), `all_property_specs()` and
-  `type_spec()` return frozen pydantic `SchemaSpec` / `PropertySpec` /
-  `TypeSpec` objects.
-- **Bundled model updated to followthemoney v4.11.3.** New entity classes
-  `Control` and `Territory`; `Risk` gains `authority`, `program`,
-  `programId` and `programUrl`; `LegalEntity` gains `cikCode`; and the
-  `Topic` enum gains `corp.clone` and `geo.risk`.
+- **`yente-mcp` without the `mcp` extra prints the install hint** in place of
+  a raw `ModuleNotFoundError: No module named 'mcp'`.
+- **MCP tools forward the caller's bearer token.** FastMCP leaves the
+  `Authorization` header out of `get_http_headers()` unless it is asked for by
+  name, so the tools always used the server's `OPENSANCTIONS_API_KEY` or no key.
 
 ## [0.2.0] - 2026-07-23
 

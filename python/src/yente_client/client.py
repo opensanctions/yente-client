@@ -1,5 +1,6 @@
 """Synchronous yente / OpenSanctions client."""
 
+import copy
 from collections.abc import Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Final, Literal, Self, overload
@@ -82,6 +83,19 @@ class Client:
         kwargs["transport"] = transport or httpx.HTTPTransport(retries=2)
         self._http = httpx.Client(**kwargs)
         self._etags = ETagCache()
+        self._request_headers: dict[str, str] = {}
+
+    def with_api_key(self, api_key: str) -> Self:
+        """Return a client that sends ``api_key`` over this client's connections.
+
+        Use this to serve many API keys, such as one per caller, from one
+        connection pool. The returned client shares the ``httpx.Client`` and the
+        ETag cache of this one. Close only the original client: closing either
+        one closes the shared connections.
+        """
+        client = copy.copy(self)
+        client._request_headers = {**self._request_headers, "Authorization": f"ApiKey {api_key}"}
+        return client
 
     @property
     def user_agent(self) -> str:
@@ -101,7 +115,8 @@ class Client:
     def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         """Issue one HTTP request, mapping connection failures to ``TransportError``."""
         try:
-            return self._http.request(method, url, **kwargs)
+            headers = {**self._request_headers, **kwargs.pop("headers", {})}
+            return self._http.request(method, url, headers=headers, **kwargs)
         except httpx.TransportError as exc:
             raise TransportError(str(exc)) from exc
 

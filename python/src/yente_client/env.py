@@ -27,6 +27,13 @@ MCP_NAME_VAR = "YENTE_MCP_NAME"
 MCP_INSTRUCTIONS_VAR = "YENTE_MCP_INSTRUCTIONS"
 """Name of the env var that overrides the MCP server's description/instructions."""
 
+MCP_OAUTH_ISSUER_VAR = "YENTE_MCP_OAUTH_ISSUER"
+"""Name of the env var that sets the OAuth2 issuer whose access tokens the MCP
+server accepts. Setting it makes the server an OAuth2 resource server."""
+
+MCP_PUBLIC_URL_VAR = "YENTE_MCP_PUBLIC_URL"
+"""Name of the env var that sets the public root URL of the MCP server."""
+
 DEFAULT_MCP_NAME = "yente"
 """MCP server name advertised when ``$YENTE_MCP_NAME`` is unset."""
 
@@ -84,8 +91,8 @@ HOSTED_HOSTS = (
     "api.test.opensanctions.com",
 )
 """Hostnames of the hosted OpenSanctions API, across every TLD we might serve
-from. Used to decide whether a client built without an ``api_key`` warrants a
-warning; a self-hosted yente is not in this set and stays quiet."""
+from. Website links only resolve for the hosted API's data; a self-hosted yente
+is not in this set."""
 
 
 def api_key() -> str | None:
@@ -114,3 +121,13 @@ def mcp_instructions() -> str:
     shown to MCP clients for a branded deployment.
     """
     return os.environ.get(MCP_INSTRUCTIONS_VAR, DEFAULT_MCP_INSTRUCTIONS)
+
+
+def mcp_oauth_issuer() -> str | None:
+    """Return ``$YENTE_MCP_OAUTH_ISSUER``, or ``None`` if unset."""
+    return os.environ.get(MCP_OAUTH_ISSUER_VAR) or None
+
+
+def mcp_public_url() -> str | None:
+    """Return ``$YENTE_MCP_PUBLIC_URL``, or ``None`` if unset."""
+    return os.environ.get(MCP_PUBLIC_URL_VAR) or None

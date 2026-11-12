@@ -9,9 +9,9 @@ Full documentation, including the tutorial and API reference, lives at
 ## Install
 
 ```bash
-pip install yente-client            # SDK only
-pip install 'yente-client[cli]'     # SDK + `yente-cli` command-line tool
-pip install 'yente-client[mcp]'     # SDK + `yente-mcp` server for LLM agents
+pip install yente-client                          # SDK only
+uvx --from 'yente-client[cli]' yente-cli --help   # `yente-cli` command-line tool
+uvx --from 'yente-client[mcp]' yente-mcp          # `yente-mcp` server for LLM agents
 ```
 
 Python 3.11+; runtime deps are `pydantic` and `httpx`. The `[cli]` extra
@@ -53,10 +53,10 @@ for sanction in entity.properties.get("sanctions", []):
     print(sanction.properties["authority"])
 
 # Operational endpoints
-c.datasets()      # available datasets and freshness
-c.programs()      # sanctions-program catalog (resolves programId codes)
-c.algorithms()    # enabled matching algorithms
-c.healthz()       # liveness
+c.datasets()  # available datasets and freshness
+c.programs()  # sanctions-program catalog (resolves programId codes)
+c.algorithms()  # enabled matching algorithms
+c.healthz()  # liveness
 ```
 
 ## Entity construction
@@ -72,8 +72,8 @@ from yente_client import Person, Company
 p = Person(firstName="Aleksandr", lastName="Zacharov", country="ru")
 c = Company(name="Acme LLC", jurisdiction="us")
 
-Person(birth_date="1965")    # ValidationError — snake_case isn't aliased
-Person(notARealProp="X")     # ValidationError — extra="forbid"
+Person(birth_date="1965")  # ValidationError — snake_case isn't aliased
+Person(notARealProp="X")  # ValidationError — extra="forbid"
 ```
 
 ## Configuration
@@ -94,7 +94,7 @@ Person(notARealProp="X")     # ValidationError — extra="forbid"
 
 ## CLI
 
-`pip install yente-client[cli]` ships a `yente-cli` binary that mirrors the SDK:
+The `yente-cli` binary mirrors the SDK:
 
 ```bash
 export OPENSANCTIONS_API_KEY=sk_...        # or pass --api-key

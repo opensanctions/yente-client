@@ -6,6 +6,23 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + dev dependencies
+        run: pip install -e python/.[dev]
+
+      - name: Run prek hooks
+        run: prek run --all-files --show-diff-on-failure
+
   python:
     runs-on: ubuntu-latest
     strategy:
@@ -23,18 +40,6 @@ jobs:
 
       - name: Install package + dev dependencies
         run: pip install -e python/.[dev]
-
-      - name: ruff check
-        working-directory: python
-        run: ruff check .
-
-      - name: ruff format --check
-        working-directory: python
-        run: ruff format --check .
-
-      - name: mypy --strict
-        working-directory: python
-        run: mypy
 
       - name: pytest (offline, with coverage)
         working-directory: python
@@ -58,9 +63,6 @@ jobs:
           pip install pip-audit
           pip-audit --strict || true
 
-      - name: regen_model.py --check (drift detector)
-        run: python scripts/regen_model.py --check --skip-fetch
-
       - name: docs build (mkdocs --strict)
         working-directory: python
         run: mkdocs build --strict
@@ -83,7 +85,7 @@ jobs:
     # Runs only after the offline matrix is green, and only when secrets are
     # available — i.e. on push to main or on PRs from the same repo. PRs from
     # forks skip this job by design (Actions hides secrets from them).
-    needs: python
+    needs: [lint, python]
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
