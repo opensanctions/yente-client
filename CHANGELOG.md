@@ -11,9 +11,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - **MCP server output reshaped around what an analyst needs to judge a hit.**
-  `fetch_entity_by_id` now returns a profile: the entity's record, its
-  sanctions, risk listings and positions held in full, and a summary of each
-  other relationship type, with `full=True` for the raw record. Relationship
+  `fetch_entity_by_id` now returns a profile: the entity's record and a
+  preview of its sanctions, risk listings, positions held and each other
+  relationship type, with `full=True` for the raw record. Relationship
   edges keep their own details, and the entity at the far end is abridged
   like a match candidate. Only top-level records carry
   `first_seen` / `last_change`. If the
@@ -25,7 +25,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   behind each scoring feature. `match_entity` gains `cutoff` and returns
   `near_misses` when nothing clears the default cutoff.
   `fetch_entity_statements` gains `sort` and reports `last_seen`. Every
-  response pages lists with `next_offset`. Shown properties are now chosen
+  list carries `next`, the exact tool call for its next page, and a
+  profile's `narrative_text` names the call for its prose. Shown properties are now chosen
   per schema, so vessels show their IMO number and flag.
 - **One MCP `legend` contract across every tool.** Every entity-bearing
   response, and the single-record views of `describe_dataset` and
@@ -60,7 +61,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one abridged shape:** ID, caption, schema, topic labels, and
   `property_count` / `value_count` / `dataset_count` for what the full record
   holds. `abridged` names the call that returns the record, e.g.
-  `fetch_entity_by_id("Q4398633")`; match candidates add the match evidence.
+  `fetch_entity_by_id(entity_id="Q4398633")`; match candidates add the match evidence.
   `search_entities`, `fetch_entity_relations` and
   `fetch_entity_statements` page 10 results by default, at most 25.
 - **MCP `describe_*` tools merged into `describe(kind, name)`.** `kind` is

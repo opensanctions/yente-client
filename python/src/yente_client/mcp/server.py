@@ -82,10 +82,10 @@ _READ_ONLY = ToolAnnotations(
 # Page sizes a caller sees. Every list a tool pages through (search results,
 # one relation type, statements) defaults to _PAGE_SIZE and is capped at
 # _MAX_PAGE_SIZE: a page of 100 ownership edges (~105k characters) overflows MCP
-# clients' tool-output caps, while paging is free. A profile shows a few edges
-# per relationship type so hub entities stay readable, the overview of every
-# type a few more. Tool docstrings state the default and the cap; a test keeps
-# them in step with these values.
+# clients' tool-output caps, while paging is free. A profile previews a few
+# records per section and relationship type so hub entities stay readable (and
+# fit those caps), the overview of every type a few more. Tool docstrings state
+# the default and the cap; a test keeps them in step with these values.
 _PAGE_SIZE = 10
 _MAX_PAGE_SIZE = 25
 _PROFILE_EDGES = 3
@@ -93,9 +93,9 @@ _OVERVIEW_EDGES = 5
 # Candidates returned below cutoff when a screen comes back empty.
 _NEAR_MISS_LIMIT = 3
 
-# Read sizes no caller sees. Profile sections and designation records are read
-# in one go, statements per prose property likewise (Gazprom, a heavy case, has
-# ~65 notes); descriptions are then paged by a character budget.
+# Read sizes no caller sees. The descriptions tool reads designation records in
+# one go, and statements per prose property likewise (Gazprom, a heavy case, has
+# ~65 notes), then pages the texts by a character budget.
 _SECTION_READ = 50
 _STATEMENT_READ = 1000
 _TEXT_PAGE_CHARS = 15_000
@@ -420,7 +420,22 @@ async def search_entities(
             topics=topics,
         )
     results = [shaping.shape(r, "ref") for r in resp.results]
-    out = {**shaping.page_info(resp.total, offset, len(results)), "results": results}
+
+    def next_call(next_offset: int) -> str:
+        return shaping.tool_call(
+            "search_entities",
+            q=q,
+            dataset=None if dataset == "default" else dataset,
+            schema=schema,
+            countries=countries,
+            topics=topics,
+            limit=None if limit == _PAGE_SIZE else limit,
+            offset=next_offset,
+            fuzzy=fuzzy or None,
+            simple=simple or None,
+        )
+
+    out = {**shaping.page_info(resp.total, offset, len(results), next_call), "results": results}
     return await _with_legend(out, client)
 
 
@@ -428,8 +443,8 @@ async def search_entities(
 async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str, Any]:
     """Profile one entity by ID: the call for "tell me about X".
 
-    Returns the entity's record (names, dates, identifiers, addresses) and, in
-    full, its risk basis:
+    Returns the entity's record (names, dates, identifiers, addresses) and
+    the first few records of its risk basis:
 
     - `sanctions`: designations that impose a restriction (program,
       authority, dates).
@@ -437,12 +452,12 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
       lists, advisories, persons-of-interest registers).
     - `positionOccupancies`: positions held, with country, dates and status.
 
-    `relations` summarizes every other relationship type (ownership,
-    directorships, family, associates, …): its total and first few edges. Each
-    edge keeps its own details (role, share, relationship, dates); the entity
-    at its far end is abridged to its identity, topics and counts. Page one type in full
-    with fetch_entity_relations. Prose is left out: `descriptions` counts the
-    notes and designation reasons that fetch_entity_descriptions returns. The
+    `relations` previews every other relationship type (ownership,
+    directorships, family, associates, …) the same way. Each section and type
+    carries its `total`, and `next` names the call for the rest. Each edge
+    keeps its own details (role, share, relationship, dates); the entity at its
+    far end is abridged to its identity, topics and counts. Prose is left out:
+    `narrative_text` names the call for the notes and designation reasons. The
     record's `first_seen` / `last_change` say when it entered the data and
     last changed.
 
@@ -462,21 +477,11 @@ async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str,
         return await _with_legend(shaping.shape_raw(entity), client)
     try:
         adjacency = await client.adjacent(entity.id, limit=_PROFILE_EDGES)
-        truncated = [
-            prop
-            for prop in shaping.PROFILE_SECTIONS
-            if (page := adjacency.adjacent.get(prop)) is not None
-            and page.total.value > len(page.results)
-        ]
-        pages = await asyncio.gather(
-            *(client.adjacent(entity.id, prop=prop, limit=_SECTION_READ) for prop in truncated)
-        )
     except YenteError as exc:
         profile = shaping.shape(entity)
         profile["relations_unavailable"] = describe_error(exc)
         return await _with_legend(profile, client)
-    full_pages = dict(zip(truncated, pages, strict=True))
-    return await _with_legend(shaping.shape_profile(entity, adjacency, full_pages), client)
+    return await _with_legend(shaping.shape_profile(entity, adjacency), client)
 
 
 @mcp.tool(
@@ -495,7 +500,7 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     official sources first; identical texts from several sources appear once,
     translations separately with their `lang`.
 
-    Page with `offset` while `next_offset` is set. `credits_unavailable` means
+    While `next` is set, it names the call for the next page. `credits_unavailable` means
     the texts carry no per-source credits (a self-hosted yente has no
     statement store); `relations_unavailable` means designation reasons could
     not be read.
@@ -536,7 +541,13 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     records = legend.dataset_records(catalog) if catalog else {}
     unofficial = {name for name, rec in records.items() if rec.get("official") is False}
     entries = shaping.text_entries(entity, statements, designations, unofficial)
-    out.update(shaping.page_entries(entries, offset, _TEXT_PAGE_CHARS))
+
+    def next_call(next_offset: int) -> str:
+        return shaping.tool_call(
+            "fetch_entity_descriptions", entity_id=entity.id, offset=next_offset
+        )
+
+    out.update(shaping.page_entries(entries, offset, _TEXT_PAGE_CHARS, next_call))
     return await _with_legend(out, client)
 
 
@@ -558,8 +569,9 @@ async def fetch_entity_relations(
     `positionOccupancies`. For a company, "ownershipOwner" lists what it owns
     and "ownershipAsset" who owns it. Each edge carries its own properties
     (role, share, dates); the entity at its far end is abridged to its
-    identity, topics and counts. Page with
-    `limit` (default 10, at most 25) / `offset` until `next_offset` is null;
+    identity, topics and counts. Pages hold `limit` edges (default 10,
+    at most 25); `next` names the call for the next page and is null on the
+    last.
     `total` counts every edge, read or not. With no `prop`, returns every
     type with its total and first few edges.
     """
@@ -585,7 +597,7 @@ async def fetch_entity_relations(
                 limit=_cap(_PAGE_SIZE if limit is None else limit),
                 offset=offset,
             )
-            out = shaping.shape_relation_page(block, entity_id, prop)
+            out = shaping.shape_relation_page(block, entity_id, prop, limit=limit)
             codes = legend.collect_codes(out)
             codes.add_properties(None, [prop])
     return await _with_legend(out, client, codes)
@@ -625,7 +637,19 @@ async def fetch_entity_statements(
             limit=_cap(limit),
             offset=offset,
         )
-    return await _with_legend(shaping.shape_statements(resp), client)
+
+    def next_call(next_offset: int) -> str:
+        return shaping.tool_call(
+            "fetch_entity_statements",
+            entity_id=entity_id,
+            prop=prop,
+            dataset=dataset,
+            sort=sort,
+            limit=None if limit == _PAGE_SIZE else limit,
+            offset=next_offset,
+        )
+
+    return await _with_legend(shaping.shape_statements(resp, next_call), client)
 
 
 _TOPICS_ABOUT = (

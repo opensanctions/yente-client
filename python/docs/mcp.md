@@ -60,7 +60,7 @@ Screening and investigation:
 | --- | --- |
 | `match_entity` | Screen one entity, query-by-example; returns scored candidates with the evidence behind each score. Use for any matching task, even with partial input. |
 | `search_entities` | Keyword browsing; returns unscored entities. Never a way to decide whether someone is listed. |
-| `fetch_entity_by_id` | Profile one entity by OpenSanctions ID: its record, its sanctions, risk listings and positions held in full, and a summary of its other relationships. |
+| `fetch_entity_by_id` | Profile one entity by OpenSanctions ID: its record, and a preview of its sanctions, risk listings, positions held and other relationships. |
 | `fetch_entity_descriptions` | What sources write about an entity, verbatim: sanction and risk reasons, then descriptions and biography notes, each credited to its source dataset. |
 | `fetch_entity_relations` | Page through one relationship type (ownership, directorships, family, …) in full. |
 | `fetch_entity_statements` | Statement-level provenance: which source asserted a value, and when (hosted API only). |
@@ -106,23 +106,26 @@ Every response follows the same shape:
   back as `near_misses`, so a "no match" can still be explained. `checked`
   echoes the dataset and topics that were screened, and `as_of`, when the
   data was last updated.
-- **Lists** carry `total`, `returned` and `next_offset`. A `next_offset` of
-  `null` means the list is complete. Search results, one relation type and
-  statements page 10 at a time by default, at most 25.
+- **Lists** carry `total`, `returned` and `next`, the exact call for the
+  next page, e.g. `fetch_entity_relations(entity_id="Q7747",
+  prop="sanctions", offset=3)`. A `next` of `null` means the list is
+  complete. Search results, one relation type and statements page 10 at a
+  time by default, at most 25; a profile previews 3 records per section and
+  relationship type.
 - **Entities to look up next are abridged.** Match candidates, search
   results and the entity at the far end of a relationship carry their ID,
   caption, schema and topic labels, plus `property_count`, `value_count` and
   `dataset_count` for what the full record holds. `abridged` names the call
-  that returns that record, e.g. `fetch_entity_by_id("Q4398633")`. A match
+  that returns that record, e.g. `fetch_entity_by_id(entity_id="Q4398633")`. A match
   candidate's explanation still shows the values the matcher compared.
 - **Relationship edges keep their own details** (role, share, relationship,
   dates). A position's post is part of the position held, so it keeps
   key properties such as its country. Only top-level records carry
   `first_seen` and `last_change`.
 - **Prose has its own tool.** Biography notes and designation reasons are
-  left out of every other response; the profile counts them under
-  `descriptions`, and `fetch_entity_descriptions` returns them with
-  per-source credits, official sources first.
+  left out of every other response. A profile's `narrative_text` names the
+  `fetch_entity_descriptions` call that returns them with per-source
+  credits, official sources first.
 - **Sanctions and risk listings stay separate.** A sanction imposes a
   restriction. A risk listing (a watch list, an advisory, a persons-of-interest
   register) names the entity without one.

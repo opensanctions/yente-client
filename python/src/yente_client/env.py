@@ -56,10 +56,10 @@ link templates for citing an entity, dataset or program. An entity marked \
 `abridged` shows only part of its record — often just its identity, topics \
 and how many properties, values and datasets the record holds; `abridged` \
 names the call that returns it in full. A field missing from it is not \
-shown, not unknown. A finding is \
+shown, not unknown. A list whose `next` is set is partial, and `next` names \
+the call for its next page. A finding is \
 identified by its entity ID and the datasets that list it. A dataset marked \
-`official: false` is a non-authoritative source. A list whose `total` \
-exceeds what was returned is partial. Facts absent from a response are not \
+`official: false` is a non-authoritative source. Facts absent from a response are not \
 backed by these sources.
 
 A match is evidence for a reviewer, not a determination. Whether to clear, \

@@ -35,7 +35,7 @@ Pure functions over the SDK response models — no FastMCP, unit-testable.
 import difflib
 import functools
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from datetime import datetime
 from typing import Any, Literal
@@ -116,13 +116,13 @@ def shape(
         shaped["property_count"] = len(values)
         shaped["value_count"] = sum(len(v) for v in values)
         shaped["dataset_count"] = len(entity.datasets)
-        shaped["abridged"] = _fetch_call(entity.id)
+        shaped["abridged"] = tool_call("fetch_entity_by_id", entity_id=entity.id)
         return shaped
     if level == "stub":
         props = _stub_properties(entity)
         if props:
             shaped["properties"] = props
-        shaped["abridged"] = _fetch_call(entity.id)
+        shaped["abridged"] = tool_call("fetch_entity_by_id", entity_id=entity.id)
         return shaped
     if entity.datasets:
         shaped["datasets"] = entity.datasets
@@ -153,64 +153,69 @@ def shape_raw(entity: Entity) -> dict[str, Any]:
     return record
 
 
-def shape_profile(
-    entity: Entity,
-    adjacency: AdjacentResponse,
-    full_pages: Mapping[str, AdjacentPropertyResponse] | None = None,
-) -> dict[str, Any]:
-    """Assemble the one-call entity profile: record, risk basis, relation summary.
+def shape_profile(entity: Entity, adjacency: AdjacentResponse) -> dict[str, Any]:
+    """Assemble the one-call entity profile: record, risk basis, relation previews.
 
     Each of :data:`PROFILE_SECTIONS` present on the entity moves from the
-    relations overview to the top level. ``full_pages`` holds a full page for
-    any section whose overview page was capped. ``descriptions`` counts the
-    prose values left out, per property, on the record and its designations.
+    relations previews to the top level. ``narrative_text`` names the call for
+    the record's prose and its designation reasons, when it has either.
     """
-    full_pages = full_pages or {}
     profile = shape(entity)
     relations = shape_adjacency(adjacency)
     for prop in PROFILE_SECTIONS:
-        first_page = relations.pop(prop, None)
-        if prop in full_pages:
-            profile[prop] = shape_relation_page(full_pages[prop], entity.id, prop)
-        elif first_page is not None:
-            profile[prop] = first_page
+        section = relations.pop(prop, None)
+        if section is not None:
+            profile[prop] = section
     if relations:
         profile["relations"] = relations
-    designations = [
-        edge
+    designated = any(
+        (block := adjacency.adjacent.get(prop)) is not None and block.total.value
         for prop in DESIGNATION_SECTIONS
-        if (block := full_pages.get(prop) or adjacency.adjacent.get(prop)) is not None
-        for edge in block.results
-        if isinstance(edge, Entity)
-    ]
-    counts: dict[str, int] = {}
-    for item in [entity, *designations]:
-        for name, values in _prose_values(item).items():
-            counts[name] = counts.get(name, 0) + len(values)
-    if counts:
-        profile["descriptions"] = counts
+    )
+    if designated or _prose_values(entity):
+        profile["narrative_text"] = tool_call("fetch_entity_descriptions", entity_id=entity.id)
     return profile
 
 
-def page_info(total: TotalSpec, offset: int, returned: int) -> dict[str, Any]:
+def tool_call(name: str, **args: Any) -> str:
+    """Spell out an MCP tool call, e.g. ``fetch_entity_by_id(entity_id="Q7747")``.
+
+    The form every ``abridged`` / ``next`` / ``narrative_text`` pointer takes, so
+    an agent can follow one without working out the tool or its arguments.
+    Arguments passed as ``None`` are left out.
+    """
+    parts = ", ".join(
+        f"{key}={json.dumps(value, ensure_ascii=False)}"
+        for key, value in args.items()
+        if value is not None
+    )
+    return f"{name}({parts})"
+
+
+def page_info(
+    total: TotalSpec, offset: int, returned: int, next_call: Callable[[int], str]
+) -> dict[str, Any]:
     """Build the paging envelope every list carries.
 
-    ``next_offset`` is ``None`` exactly when the list is complete, so a model
-    can't mistake a first page for the whole set. The page's own offset is
-    left out: the caller passed it.
+    ``next`` is the call for the following page, built by ``next_call`` from
+    its offset, and ``None`` exactly when the list is complete, so a model
+    can't mistake a first page for the whole set.
     """
     end = offset + returned
     return {
         "total": total.value,
         "returned": returned,
-        "next_offset": end if end < total.value else None,
+        "next": next_call(end) if end < total.value else None,
     }
 
 
 def shape_relation_page(
-    block: AdjacentPropertyResponse, source_id: str, prop: str
+    block: AdjacentPropertyResponse, source_id: str, prop: str, *, limit: int | None = None
 ) -> dict[str, Any]:
     """Shape one edge type's page: paging envelope plus edges.
+
+    ``next`` pages on with ``fetch_entity_relations``, at ``limit`` if the
+    caller chose one, else at that tool's default page size.
 
     The far end of an ordinary relationship is a ``ref``; in a profile section
     (:data:`PROFILE_SECTIONS`) it is a ``stub``, since a position's post is
@@ -227,7 +232,13 @@ def shape_relation_page(
         if prop in DESIGNATION_SECTIONS:
             row.pop("caption")
         results.append(row)
-    return {**page_info(block.total, block.offset, len(results)), "results": results}
+
+    def next_call(offset: int) -> str:
+        return tool_call(
+            "fetch_entity_relations", entity_id=source_id, prop=prop, limit=limit, offset=offset
+        )
+
+    return {**page_info(block.total, block.offset, len(results), next_call), "results": results}
 
 
 def shape_adjacency(resp: AdjacentResponse) -> dict[str, Any]:
@@ -265,10 +276,10 @@ def shape_statement(stmt: Statement) -> dict[str, Any]:
     return rec
 
 
-def shape_statements(resp: StatementsResponse) -> dict[str, Any]:
+def shape_statements(resp: StatementsResponse, next_call: Callable[[int], str]) -> dict[str, Any]:
     """Shape a statements page: paging envelope plus projected rows."""
     results = [shape_statement(s) for s in resp.results]
-    return {**page_info(resp.total, resp.offset, len(results)), "results": results}
+    return {**page_info(resp.total, resp.offset, len(results), next_call), "results": results}
 
 
 def text_property_names(schema: str) -> tuple[str, ...]:
@@ -341,7 +352,9 @@ def text_entries(
     return ordered
 
 
-def page_entries(entries: list[dict[str, Any]], offset: int, budget: int) -> dict[str, Any]:
+def page_entries(
+    entries: list[dict[str, Any]], offset: int, budget: int, next_call: Callable[[int], str]
+) -> dict[str, Any]:
     """Page ``entries`` from ``offset`` until about ``budget`` characters of JSON.
 
     A page always holds at least one entry, however long, so paging can't stall.
@@ -355,7 +368,7 @@ def page_entries(entries: list[dict[str, Any]], offset: int, budget: int) -> dic
         page.append(entry)
         used += size
     total = TotalSpec(value=len(entries), relation="eq")
-    return {**page_info(total, offset, len(page)), "results": page}
+    return {**page_info(total, offset, len(page), next_call), "results": page}
 
 
 def unknown_name(kind: str, name: str, titles: Mapping[str, str | None]) -> str:
@@ -419,11 +432,6 @@ def _summary_values(entity: Entity) -> dict[str, list[Any]]:
     return {
         name: values for name, values in entity.properties.items() if values and name in allowed
     }
-
-
-def _fetch_call(entity_id: str) -> str:
-    """Name the tool call that returns an abridged entity's full record."""
-    return f"fetch_entity_by_id({json.dumps(entity_id)})"
 
 
 def _prose_values(entity: Entity) -> dict[str, list[str]]:

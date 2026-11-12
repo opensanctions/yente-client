@@ -17,6 +17,7 @@ from yente_client.mcp.shaping import (
     shape_scored,
     shape_statements,
     text_entries,
+    tool_call,
     unknown_name,
 )
 from yente_client.models import (
@@ -148,7 +149,7 @@ def test_shape_stub_is_identity_topics_and_featured_properties() -> None:
         "schema": "Company",
         "topics": {"sanction": type_values("topic")["sanction"]},
         "properties": {"jurisdiction": ["cy"]},  # name only repeats the caption
-        "abridged": 'fetch_entity_by_id("c1")',
+        "abridged": 'fetch_entity_by_id(entity_id="c1")',
     }
 
 
@@ -259,7 +260,7 @@ def test_shape_relation_edge_refs_the_far_end() -> None:
             "property_count": 2,
             "value_count": 2,
             "dataset_count": 1,
-            "abridged": 'fetch_entity_by_id("c1")',
+            "abridged": 'fetch_entity_by_id(entity_id="c1")',
         }
     ]
     assert "abridged" not in rec  # the edge itself is shown in full
@@ -301,8 +302,8 @@ def test_shape_relation_page_drops_designation_captions() -> None:
 
 def test_only_refs_and_stubs_are_marked_abridged() -> None:
     entity = Entity(id="P1", caption="Jane", schema="Person", properties={"name": ["Jane"]})
-    assert shape(entity, "ref")["abridged"] == 'fetch_entity_by_id("P1")'
-    assert shape(entity, "stub")["abridged"] == 'fetch_entity_by_id("P1")'
+    assert shape(entity, "ref")["abridged"] == 'fetch_entity_by_id(entity_id="P1")'
+    assert shape(entity, "stub")["abridged"] == 'fetch_entity_by_id(entity_id="P1")'
     assert "abridged" not in shape(entity)
 
 
@@ -329,7 +330,7 @@ def test_match_candidate_is_a_ref_with_counts_and_evidence() -> None:
         first_seen=datetime(2023, 1, 1),
     )
     shaped = shape_scored(scored)
-    assert shaped["abridged"] == 'fetch_entity_by_id("Q1")'
+    assert shaped["abridged"] == 'fetch_entity_by_id(entity_id="Q1")'
     assert shaped["property_count"] == 4
     assert shaped["value_count"] == 4
     assert shaped["dataset_count"] == 1
@@ -339,13 +340,16 @@ def test_match_candidate_is_a_ref_with_counts_and_evidence() -> None:
 
 
 def test_page_info_marks_truncation() -> None:
-    assert page_info(_total(29), 0, 5) == {
+    def next_call(offset: int) -> str:
+        return f"more(offset={offset})"
+
+    assert page_info(_total(29), 0, 5, next_call) == {
         "total": 29,
         "returned": 5,
-        "next_offset": 5,
+        "next": "more(offset=5)",
     }
-    assert page_info(_total(29), 25, 4)["next_offset"] is None
-    assert page_info(_total(0), 0, 0)["next_offset"] is None
+    assert page_info(_total(29), 25, 4, next_call)["next"] is None
+    assert page_info(_total(0), 0, 0, next_call)["next"] is None
 
 
 def test_shape_adjacency_keys_by_edge_type_and_drops_riskSource() -> None:
@@ -384,15 +388,16 @@ def test_shape_profile_inlines_sanctions_and_summarises_relations() -> None:
     assert set(profile["relations"]) == {"familyPerson"}
 
 
-def test_shape_profile_prefers_full_pages_for_capped_sections() -> None:
+def test_shape_profile_previews_sections_and_names_the_rest() -> None:
     entity = Entity(id="P1", caption="Jane", schema="Person")
     adjacency = AdjacentResponse(
         entity=entity, adjacent={"sanctions": _page([_sanction("s1")], total=2)}
     )
-    full = _page([_sanction("s1"), _sanction("s2")], total=2)
-    profile = shape_profile(entity, adjacency, {"sanctions": full})
-    assert [s["id"] for s in profile["sanctions"]["results"]] == ["s1", "s2"]
-    assert profile["sanctions"]["next_offset"] is None
+    profile = shape_profile(entity, adjacency)
+    assert [s["id"] for s in profile["sanctions"]["results"]] == ["s1"]
+    assert profile["sanctions"]["next"] == (
+        'fetch_entity_relations(entity_id="P1", prop="sanctions", offset=1)'
+    )
     assert "relations" not in profile
 
 
@@ -425,7 +430,7 @@ def test_shape_profile_lifts_risks_and_positions_beside_sanctions() -> None:
     rec = profile["risks"]["results"][0]
     assert rec["topics"] == {"poi": type_values("topic")["poi"]}
     assert rec["properties"] == {"status": ["active"]}
-    assert profile["descriptions"] == {"reason": 1}
+    assert profile["narrative_text"] == 'fetch_entity_descriptions(entity_id="P1")'
     assert profile["positionOccupancies"]["results"][0]["id"] == "occ1"
     assert set(profile["relations"]) == {"familyPerson"}
 
@@ -480,8 +485,8 @@ def test_shape_statements_projects_provenance_rows() -> None:
         limit=50,
         offset=0,
     )
-    out = shape_statements(resp)
-    assert (out["total"], out["returned"], out["next_offset"]) == (2, 2, None)
+    out = shape_statements(resp, lambda offset: f"more(offset={offset})")
+    assert (out["total"], out["returned"], out["next"]) == (2, 2, None)
     assert out["results"][0] == {
         "prop": "alias",
         "value": "A. Zakharov",
@@ -500,21 +505,16 @@ def test_shape_statements_projects_provenance_rows() -> None:
     assert "origin" not in second  # unset for plain crawled data
 
 
-def test_shape_profile_counts_prose_left_out() -> None:
-    entity = Entity(
-        id="P1", caption="Jane", schema="Person", properties={"notes": ["a", "b"], "summary": ["c"]}
-    )
-    adjacency = AdjacentResponse(
-        entity=entity,
-        adjacent={"sanctions": _page([_sanction("s1", reason=["r1"]), _sanction("s2")], total=2)},
-    )
-    assert shape_profile(entity, adjacency)["descriptions"] == {
-        "notes": 2,
-        "summary": 1,
-        "reason": 1,
-    }
-    bare = Entity(id="P2", caption="x", schema="Person")
-    assert "descriptions" not in shape_profile(bare, AdjacentResponse(entity=bare, adjacent={}))
+def test_shape_profile_points_to_narrative_text() -> None:
+    noted = Entity(id="P1", caption="Jane", schema="Person", properties={"notes": ["a"]})
+    profile = shape_profile(noted, AdjacentResponse(entity=noted, adjacent={}))
+    assert profile["narrative_text"] == 'fetch_entity_descriptions(entity_id="P1")'
+    # designation reasons count too, though the record itself has no prose
+    listed = Entity(id="P2", caption="x", schema="Person")
+    adjacency = AdjacentResponse(entity=listed, adjacent={"sanctions": _page([], total=4)})
+    assert "narrative_text" in shape_profile(listed, adjacency)
+    bare = Entity(id="P3", caption="x", schema="Person")
+    assert "narrative_text" not in shape_profile(bare, AdjacentResponse(entity=bare, adjacent={}))
 
 
 def _statement(prop: str, value: str, dataset: str, *, lang: str | None = None) -> Statement:
@@ -601,11 +601,15 @@ def test_text_entries_fall_back_to_the_record_without_credits() -> None:
 
 def test_page_entries_respects_budget_and_marks_the_end() -> None:
     entries = [{"prop": "notes", "text": "x" * 100, "sources": []} for _ in range(5)]
-    first = page_entries(entries, 0, budget=300)
-    assert (first["returned"], first["next_offset"]) == (2, 2)
-    last = page_entries(entries, 4, budget=300)
-    assert (last["returned"], last["next_offset"]) == (1, None)
-    huge = page_entries([{"prop": "notes", "text": "x" * 1000, "sources": []}], 0, budget=10)
+
+    def more(offset: int) -> str:
+        return f"more(offset={offset})"
+
+    first = page_entries(entries, 0, 300, more)
+    assert (first["returned"], first["next"]) == (2, "more(offset=2)")
+    last = page_entries(entries, 4, 300, more)
+    assert (last["returned"], last["next"]) == (1, None)
+    huge = page_entries([{"prop": "notes", "text": "x" * 1000, "sources": []}], 0, 10, more)
     assert huge["returned"] == 1  # an oversized entry still fills a page
 
 
@@ -643,3 +647,8 @@ def test_ref_counts_only_what_a_summary_would_show() -> None:
     )
     ref = shape(entity, "ref")
     assert (ref["property_count"], ref["value_count"], ref["dataset_count"]) == (2, 3, 2)
+
+
+def test_tool_call_spells_out_set_arguments_as_json() -> None:
+    call = tool_call("search_entities", q="Gazprom", schema=None, topics=["sanction"], offset=10)
+    assert call == 'search_entities(q="Gazprom", topics=["sanction"], offset=10)'
