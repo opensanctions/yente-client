@@ -53,11 +53,20 @@ through Dynamic Client Registration.
 
 ## Scopes
 
-The server is read-only, so there is one level of access. No scope enables or
-disables a tool. All authenticated clients get all tools.
+The server is read-only, so every authenticated client gets every tool. No
+scope enables or disables a tool.
 
-The access token's audience is the MCP server alone. It cannot manage the
-OpenSanctions account: it cannot read or change users, API keys, billing, or
+The server advertises two scopes in its protected resource metadata:
+
+| Scope | Effect |
+| :---- | :---- |
+| `openid` | Identifies the user to the authorization server. |
+| `offline_access` | Issues a refresh token. Without it, the user signs in again when the access token expires. |
+
+The client requests the access token for the MCP endpoint by sending
+`resource=https://mcp.opensanctions.org/mcp` (RFC 8707). The server accepts
+only tokens with that audience. A token for the MCP server can't manage the
+OpenSanctions account: it can't read or change users, API keys, billing, or
 organization settings.
 
 ## Token security
