@@ -155,7 +155,8 @@ Every response follows the same shape:
   the query and candidate values each one compared, such as two birth dates
   that disagree. When nothing clears the cutoff, the closest candidates come
   back as `near_misses`, so a "no match" can still be explained. `checked`
-  echoes the dataset and topics that were screened, and `as_of`, when the
+  echoes the dataset and topics that were screened.
+- **Every entity response is dated.** The `legend` carries `as_of`, when the
   data was last updated.
 - **Lists** carry `total`, `returned` and `next`, the exact call for the
   next page, e.g. `fetch_entity_relations(entity_id="Q7747",
@@ -190,3 +191,6 @@ Use the [SDK](tutorial.md) or [CLI](cli.md) to experiment with algorithms.
 `YENTE_MCP_NAME` and `YENTE_MCP_INSTRUCTIONS` override the name and
 instructions the server advertises to MCP clients, so a self-hosted yente
 deployment can present its own identity without forking the server.
+`YENTE_MCP_DATASET` names the collection the tools query by default and whose
+update time responses report as `as_of`; set it to the scope your yente
+loads (unset, it is `default`).

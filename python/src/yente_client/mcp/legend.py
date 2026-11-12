@@ -36,10 +36,6 @@ def _compact(record: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in record.items() if v is not None and v != "" and v != [] and v != {}}
 
 
-# The collection whose index build a screen reports as its `as_of`.
-DEFAULT_COLLECTION = "default"
-
-
 @dataclass
 class LegendCodes:
     """The codes a response mentions, gathered for its legend."""
@@ -108,6 +104,7 @@ def build_legend(
     programs: Mapping[str, Mapping[str, Any]],
     features: Mapping[str, str] | None = None,
     links: Mapping[str, str] | None = None,
+    as_of: str | None = None,
 ) -> dict[str, Any]:
     """Resolve gathered codes into the response's ``legend``.
 
@@ -125,6 +122,7 @@ def build_legend(
     values.setdefault("country", set()).update(t for t in territories if t)
     sections: dict[str, Any] = {
         "links": dict(links or {}),
+        "as_of": as_of,
         "schemata": {s: _schema_record(s) for s in sorted(codes.schemata) if schemas.has_schema(s)},
         "properties": dict(sorted(codes.properties.items())),
     }
@@ -174,16 +172,15 @@ def program_records(programs: list[Program]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def freshness(resp: DatasetsResponse) -> dict[str, Any] | None:
-    """Return the version and update time of the default collection, if indexed.
+def as_of(resp: DatasetsResponse, dataset: str) -> str | None:
+    """Return the update time of the server's collection, for the legend's ``as_of``.
 
-    A screen reports this snapshot as its ``as_of`` regardless of the dataset
-    it was scoped to: a scoped search still runs against one index build.
+    Responses report this one time whatever dataset a call was scoped to: a
+    scoped query still runs against one index build.
     """
     for d in resp.datasets:
-        if d.name == DEFAULT_COLLECTION:
-            rec = {"version": d.index_version or d.version, "updated_at": _timestamp(d.updated_at)}
-            return _compact(rec) or None
+        if d.name == dataset:
+            return _timestamp(d.updated_at)
     return None
 
 

@@ -10,6 +10,7 @@ def test_var_names_are_stable() -> None:
     assert env.BASE_URL_VAR == "YENTE_BASE_URL"
     assert env.MCP_NAME_VAR == "YENTE_MCP_NAME"
     assert env.MCP_INSTRUCTIONS_VAR == "YENTE_MCP_INSTRUCTIONS"
+    assert env.MCP_DATASET_VAR == "YENTE_MCP_DATASET"
 
 
 def test_api_key_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,6 +41,16 @@ def test_mcp_name_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_mcp_name_defaults_to_yente(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("YENTE_MCP_NAME", raising=False)
     assert env.mcp_name() == "yente"
+
+
+def test_mcp_dataset_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YENTE_MCP_DATASET", "sanctions")
+    assert env.mcp_dataset() == "sanctions"
+
+
+def test_mcp_dataset_defaults_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("YENTE_MCP_DATASET", raising=False)
+    assert env.mcp_dataset() == "default"
 
 
 def test_mcp_instructions_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:

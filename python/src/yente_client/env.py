@@ -27,6 +27,9 @@ MCP_NAME_VAR = "YENTE_MCP_NAME"
 MCP_INSTRUCTIONS_VAR = "YENTE_MCP_INSTRUCTIONS"
 """Name of the env var that overrides the MCP server's description/instructions."""
 
+MCP_DATASET_VAR = "YENTE_MCP_DATASET"
+"""Name of the env var that sets the collection the MCP server's tools query."""
+
 MCP_OAUTH_ISSUER_VAR = "YENTE_MCP_OAUTH_ISSUER"
 """Name of the env var that sets the OAuth2 issuer whose access tokens the MCP
 server accepts. Setting it makes the server an OAuth2 resource server."""
@@ -36,6 +39,9 @@ MCP_PUBLIC_URL_VAR = "YENTE_MCP_PUBLIC_URL"
 
 DEFAULT_MCP_NAME = "yente"
 """MCP server name advertised when ``$YENTE_MCP_NAME`` is unset."""
+
+DEFAULT_MCP_DATASET = "default"
+"""Collection the MCP server's tools query when ``$YENTE_MCP_DATASET`` is unset."""
 
 DEFAULT_MCP_INSTRUCTIONS = """\
 OpenSanctions combines sanctions lists, PEP registers and other watchlists \
@@ -59,7 +65,8 @@ whether someone is listed.
 
 Responses carry a `legend` with the display label of every code they contain \
 (schemata, properties, countries, datasets, programs, match features) and \
-link templates for citing an entity, dataset or program. An entity marked \
+link templates for citing an entity, dataset or program; its `as_of` is when \
+the data was last updated. An entity marked \
 `abridged` shows only part of its record — often just its identity, topics \
 and how many properties, values and datasets the record holds; `abridged` \
 names the call that returns it in full. A field missing from it is not \
@@ -121,6 +128,16 @@ def mcp_instructions() -> str:
     shown to MCP clients for a branded deployment.
     """
     return os.environ.get(MCP_INSTRUCTIONS_VAR, DEFAULT_MCP_INSTRUCTIONS)
+
+
+def mcp_dataset() -> str:
+    """Return ``$YENTE_MCP_DATASET``, or :data:`DEFAULT_MCP_DATASET` if unset.
+
+    Names the collection the MCP tools query unless a call picks another, and
+    whose update time responses report as ``as_of``. A self-hosted yente that
+    loads a different scope sets it to that scope.
+    """
+    return os.environ.get(MCP_DATASET_VAR, DEFAULT_MCP_DATASET)
 
 
 def mcp_oauth_issuer() -> str | None:

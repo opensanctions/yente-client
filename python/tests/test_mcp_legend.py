@@ -6,11 +6,11 @@ no FastMCP.
 
 from yente_client.mcp.legend import (
     LegendCodes,
+    as_of,
     build_legend,
     collect_codes,
     dataset_records,
     feature_descriptions,
-    freshness,
     program_records,
 )
 from yente_client.mcp.shaping import shape, shape_profile, shape_scored
@@ -121,7 +121,7 @@ def test_build_legend_resolves_and_omits_empty_sections() -> None:
     assert legend["datasets"] == {"x": {"title": "Dataset X"}}
     assert legend["properties"]["birthDate"]["type"] == "date"
     assert "programs" not in legend
-    assert "freshness" not in legend and "links" not in legend
+    assert "as_of" not in legend and "links" not in legend
     # failure-soft: missing records degrade to a thinner legend
     assert "datasets" not in build_legend(codes, datasets={}, programs={})
 
@@ -198,13 +198,17 @@ def test_dataset_records_mark_officialness_without_urls(load_fixture) -> None:
     assert "official" not in records["sanctions"]  # a collection has no publisher
 
 
-def test_freshness_reports_the_default_collection(load_fixture) -> None:
+def test_as_of_reports_the_named_collection(load_fixture) -> None:
     catalog = DatasetsResponse.model_validate(load_fixture("catalog"))
-    fresh = freshness(catalog)
-    assert fresh is not None
-    assert fresh["version"] == catalog.datasets[0].index_version
-    assert fresh["updated_at"].startswith("2026-05-30")
-    assert freshness(DatasetsResponse(datasets=[])) is None
+    updated = as_of(catalog, "default")
+    assert updated is not None and updated.startswith("2026-05-30")
+    assert as_of(catalog, "no_such_collection") is None
+    assert as_of(DatasetsResponse(datasets=[]), "default") is None
+
+
+def test_build_legend_carries_as_of() -> None:
+    legend = build_legend(LegendCodes(), datasets={}, programs={}, as_of="2026-05-30T00:00:00")
+    assert legend == {"as_of": "2026-05-30T00:00:00"}
 
 
 def test_feature_descriptions_follow_the_default_alias(load_fixture) -> None:

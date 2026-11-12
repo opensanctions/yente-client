@@ -47,15 +47,41 @@ async def _call(name: str, args: dict[str, Any]) -> dict[str, Any]:
     return json.loads("".join(getattr(block, "text", "") for block in content))
 
 
-async def test_empty_screen_reports_as_of_without_a_legend(
+async def test_empty_screen_legend_carries_only_as_of(
     use_api: None, load_fixture: Callable[[str], dict[str, Any]]
 ) -> None:
     out = await _call("match_entity", {"schema": "Person", "properties": {"name": ["Nobody"]}})
     assert out["results"] == []
     assert "near_misses" not in out
-    assert "legend" not in out
+    assert "as_of" not in out["checked"]
+    assert out["legend"].keys() - {"links"} == {"as_of"}
     updated = next(d for d in load_fixture("catalog")["datasets"] if d["name"] == "default")
-    assert out["checked"]["as_of"].startswith(updated["updated_at"][:10])
+    assert out["legend"]["as_of"].startswith(updated["updated_at"][:10])
+
+
+async def test_search_legend_dates_the_server_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+    make_async_client: Callable[..., AsyncClient],
+    load_fixture: Callable[[str], dict[str, Any]],
+) -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/catalog":
+            return httpx.Response(200, json=load_fixture("catalog"))
+        paths.append(request.url.path)
+        return httpx.Response(200, json=load_fixture("search_basic"))
+
+    client = make_async_client(handler=handler)
+    monkeypatch.setattr(server, "_resolve_client", lambda: client)
+    out = await _call("search_entities", {"q": "Zacharov"})
+    assert out["legend"]["as_of"]
+
+    # A dataset the catalog doesn't list has no update time to report.
+    monkeypatch.setattr(server, "DATASET", "other")
+    out = await _call("search_entities", {"q": "Zacharov", "dataset": "other"})
+    assert paths == ["/search/default", "/search/other"]
+    assert "as_of" not in out["legend"]
 
 
 async def test_page_size_is_capped(

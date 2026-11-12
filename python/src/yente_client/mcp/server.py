@@ -110,13 +110,13 @@ _TEXT_PAGE_CHARS = 15_000
 # Labels ship with the data rather than as an instruction to resolve codes:
 # agents use a label next to its code and skip a separate lookup step.
 #
-# 15 minutes bounds how long a newly added dataset or sanctions program stays
-# unresolvable, and how stale a screen's reported `as_of` can be; the catalogs
+# 5 minutes bounds how long a newly added dataset or sanctions program stays
+# unresolvable, and how stale a response's reported `as_of` can be; the catalogs
 # change on slower cadences than that. Refreshes
 # are cheap: programs.json revalidates via ETag (a 304 round-trip), and the
 # catalog is a small response (see opensanctions/yente#1202 for giving it an
 # ETag too).
-_GLOSSARY_TTL_SECONDS = 900.0
+_GLOSSARY_TTL_SECONDS = 300.0
 
 
 class _TTLCache(Generic[T]):
@@ -163,6 +163,7 @@ def _reset_caches() -> None:
 
 
 BASE_URL = env.base_url()
+DATASET = env.mcp_dataset()
 # Fallback API key for the whole server, used when a request carries no bearer
 # token — lets you run yente-mcp locally against a real API for testing.
 API_KEY = env.api_key()
@@ -304,9 +305,16 @@ def _tool_errors() -> Iterator[None]:
 
 
 async def _with_legend(
-    out: dict[str, Any], client: AsyncClient, codes: legend.LegendCodes | None = None
+    out: dict[str, Any],
+    client: AsyncClient,
+    codes: legend.LegendCodes | None = None,
+    *,
+    as_of: bool = True,
 ) -> dict[str, Any]:
     """Attach the response's ``legend`` for every code it mentions, and return it.
+
+    The legend's ``as_of`` dates the data an entity response came from;
+    describe records pass ``as_of=False``.
 
     ``codes`` replaces the walk of ``out`` when the caller knows codes the walk
     can't see (relation keys, a describe record's countries). Program and
@@ -328,6 +336,7 @@ async def _with_legend(
         programs=legend.program_records(programs.data) if programs else {},
         features=legend.feature_descriptions(algorithms) if algorithms else {},
         links=_LINKS,
+        as_of=legend.as_of(catalog, DATASET) if catalog and as_of else None,
     )
     if resolved.keys() - {"links"}:
         out["legend"] = resolved
@@ -368,7 +377,7 @@ async def match_entity(
     schema: str,
     properties: dict[str, list[str]],
     *,
-    dataset: str = "default",
+    dataset: str = DATASET,
     threshold: float | None = None,
     cutoff: float | None = None,
     topics: list[str] | None = None,
@@ -396,10 +405,11 @@ async def match_entity(
     what would settle it. Candidates are abridged to their identity, topics
     and counts; profile the ones worth a closer look. When no candidate clears the
     cutoff, `near_misses` shows the closest ones and why they fell short. `checked`
-    echoes the scope screened and the data's `as_of` time.
+    echoes the scope screened.
 
     Args:
-        dataset: Collection to screen against; "default" covers all sources.
+        dataset: Collection to screen against; the default covers every source
+            the server loads.
         threshold: Score at which `match` turns true; leave to the server.
         cutoff: Score below which candidates are dropped; leave to the server.
         limit: Candidates to return, at most 25.
@@ -414,14 +424,11 @@ async def match_entity(
         near_misses = None
         if not resp.results and cutoff is None:
             near_misses = await screen(cutoff=0.0, limit=_NEAR_MISS_LIMIT)
-    catalog = await _soft(_catalog, client.datasets)
-    freshness = (legend.freshness(catalog) if catalog else None) or {}
     checked = {
         "dataset": dataset,
         "topics": topics,
         "threshold": threshold,
         "cutoff": cutoff,
-        "as_of": freshness.get("updated_at"),
     }
     results = [shaping.shape_scored(r) for r in resp.results]
     out: dict[str, Any] = {
@@ -442,7 +449,7 @@ async def match_entity(
 async def search_entities(
     q: str,
     *,
-    dataset: str = "default",
+    dataset: str = DATASET,
     schema: str | None = None,
     countries: list[str] | None = None,
     topics: list[str] | None = None,
@@ -485,7 +492,7 @@ async def search_entities(
         return shaping.tool_call(
             "search_entities",
             q=q,
-            dataset=None if dataset == "default" else dataset,
+            dataset=None if dataset == DATASET else dataset,
             schema=schema,
             countries=countries,
             topics=topics,
@@ -784,7 +791,7 @@ async def _describe_dataset(name: str) -> dict[str, Any]:
                 codes.add_values("country", dataset.coverage.countries)
             if dataset.publisher is not None:
                 codes.add_values("country", [dataset.publisher.country])
-            return await _with_legend(out, client, codes)
+            return await _with_legend(out, client, codes, as_of=False)
     titles = {d.name: d.title for d in resp.datasets}
     raise ToolError(shaping.unknown_name("dataset", name, titles))
 
@@ -802,7 +809,7 @@ async def _describe_program(key: str) -> dict[str, Any]:
             codes.add_values("country", [territory, *program.target_territories])
             if program.dataset:
                 codes.datasets.add(program.dataset)
-            return await _with_legend(out, client, codes)
+            return await _with_legend(out, client, codes, as_of=False)
     titles = {p.key: p.title for p in catalog}
     raise ToolError(shaping.unknown_name("program", key, titles))
 

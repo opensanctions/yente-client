@@ -34,6 +34,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `YENTE_MCP_PUBLIC_URL` set, the server serves the protected resource
   metadata, accepts only valid access tokens from the issuer, forwards them to
   the API, and answers all other requests with `401`.
+- **`YENTE_MCP_DATASET`** sets the collection the `yente-mcp` tools query by
+  default and whose update time they report as `as_of`. A self-hosted yente
+  that loads a different scope sets it to that scope; unset, it is `default`.
 - `py.typed` marker, which the `Typing :: Typed` classifier promises. Without
   it, mypy in downstream projects skips `yente_client`.
 
@@ -71,8 +74,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The legend covers only codes the response contains, and is left out when
   there are none. It also carries `links`: templates for citing an entity,
   dataset or program on the OpenSanctions website, present only against the
-  hosted API. Topic labels stay inline on each entity. `match_entity`
-  reports the data's update time as `checked.as_of`.
+  hosted API. Topic labels stay inline on each entity. The legend of every
+  entity-bearing response carries `as_of`, when the data was last updated.
 - **MCP `describe_dataset` and `describe_program` require a name or key.**
   The no-argument catalog indexes are gone: they were too large for an
   agent's context. An unknown name returns the closest matching entries.
