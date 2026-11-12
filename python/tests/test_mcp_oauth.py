@@ -81,7 +81,7 @@ async def test_metadata_names_issuer_and_resource(downstream: list[httpx.Request
     assert response.status_code == 200
     metadata = response.json()
     assert metadata["resource"] == RESOURCE
-    assert metadata["authorization_servers"] == [f"{ISSUER}/"]
+    assert metadata["authorization_servers"] == [ISSUER]
 
 
 async def test_request_without_credential_gets_401(downstream: list[httpx.Request]) -> None:
