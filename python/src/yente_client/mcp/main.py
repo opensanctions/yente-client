@@ -11,9 +11,9 @@ flag; ``YENTE_BASE_URL`` (the yente the server forwards calls to),
 token), ``YENTE_MCP_DATASET`` (the collection tools query by default), and
 ``YENTE_MCP_OAUTH_ISSUER`` / ``YENTE_MCP_PUBLIC_URL`` (OAuth2 login).
 
-Branding for self-hosted deployments: ``YENTE_MCP_NAME`` and
-``YENTE_MCP_INSTRUCTIONS`` override the name and description advertised to MCP
-clients (default ``yente`` / the stock copy).
+Branding for self-hosted deployments: ``YENTE_MCP_NAME``, ``YENTE_MCP_TITLE``,
+``YENTE_MCP_DESCRIPTION`` and ``YENTE_MCP_INSTRUCTIONS`` override the name,
+display title, one-line description and instructions advertised to MCP clients.
 """
 
 import argparse

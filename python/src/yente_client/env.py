@@ -24,6 +24,12 @@ BASE_URL_VAR = "YENTE_BASE_URL"
 MCP_NAME_VAR = "YENTE_MCP_NAME"
 """Name of the env var that overrides the MCP server's advertised name."""
 
+MCP_TITLE_VAR = "YENTE_MCP_TITLE"
+"""Name of the env var that overrides the MCP server's display title."""
+
+MCP_DESCRIPTION_VAR = "YENTE_MCP_DESCRIPTION"
+"""Name of the env var that overrides the MCP server's one-line description."""
+
 MCP_INSTRUCTIONS_VAR = "YENTE_MCP_INSTRUCTIONS"
 """Name of the env var that overrides the MCP server's description/instructions."""
 
@@ -48,6 +54,14 @@ MCP_PORT_VAR = "YENTE_MCP_PORT"
 
 DEFAULT_MCP_NAME = "yente"
 """MCP server name advertised when ``$YENTE_MCP_NAME`` is unset."""
+
+DEFAULT_MCP_TITLE = "Yente"
+"""MCP server title advertised when ``$YENTE_MCP_TITLE`` is unset."""
+
+DEFAULT_MCP_DESCRIPTION = (
+    "Screen people and companies against sanctions lists, PEP registers and other watchlists."
+)
+"""MCP server description advertised when ``$YENTE_MCP_DESCRIPTION`` is unset."""
 
 DEFAULT_MCP_DATASET = "default"
 """Collection the MCP server's tools query when ``$YENTE_MCP_DATASET`` is unset."""
@@ -128,6 +142,20 @@ def mcp_name() -> str:
     without forking the server.
     """
     return os.environ.get(MCP_NAME_VAR, DEFAULT_MCP_NAME)
+
+
+def mcp_title() -> str:
+    """Return ``$YENTE_MCP_TITLE``, or :data:`DEFAULT_MCP_TITLE` if unset.
+
+    MCP clients show the title in place of the name, so a branded deployment
+    sets this to the name its users know.
+    """
+    return os.environ.get(MCP_TITLE_VAR, DEFAULT_MCP_TITLE)
+
+
+def mcp_description() -> str:
+    """Return ``$YENTE_MCP_DESCRIPTION``, or :data:`DEFAULT_MCP_DESCRIPTION` if unset."""
+    return os.environ.get(MCP_DESCRIPTION_VAR, DEFAULT_MCP_DESCRIPTION)
 
 
 def mcp_instructions() -> str:

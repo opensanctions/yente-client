@@ -190,6 +190,13 @@ Use the [SDK](tutorial.md) or [CLI](cli.md) to experiment with algorithms.
 
 ## Branding a self-hosted deployment
 
-`YENTE_MCP_NAME` and `YENTE_MCP_INSTRUCTIONS` override the name and
-instructions the server advertises to MCP clients, so a self-hosted yente
-deployment can present its own identity without forking the server.
+These variables override what the server advertises to MCP clients, so a
+self-hosted yente deployment can present its own identity without forking the
+server:
+
+| Env var | Default | Notes |
+| --- | --- | --- |
+| `YENTE_MCP_NAME` | `yente` | Server identifier. |
+| `YENTE_MCP_TITLE` | `Yente` | Display name; clients show it in place of the identifier. |
+| `YENTE_MCP_DESCRIPTION` | stock one-liner | Short description of the server. |
+| `YENTE_MCP_INSTRUCTIONS` | stock copy | Instructions the assistant reads before using the tools. |
