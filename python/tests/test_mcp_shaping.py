@@ -7,8 +7,8 @@ from datetime import datetime
 
 from yente_client.mcp.legend import collect_codes
 from yente_client.mcp.shaping import (
+    page,
     page_entries,
-    page_info,
     shape,
     shape_adjacency,
     shape_profile,
@@ -285,7 +285,7 @@ def test_shape_relation_page_keeps_position_post_stubs() -> None:
     row = out["results"][0]
     post_stub = row["properties"]["post"][0]
     assert post_stub["properties"] == {"country": ["ru"]}
-    assert "not_shown" not in post_stub  # a stub, not a brief: the post is part of the edge
+    assert "property_count" not in post_stub  # a stub, not a ref: the post is part of the edge
     assert row["properties"]["startDate"] == ["2016"]
     assert "first_seen" not in row
 
@@ -339,17 +339,16 @@ def test_match_candidate_is_a_ref_with_counts_and_evidence() -> None:
     assert shaped["score"] == 0.9 and shaped["match"] is True
 
 
-def test_page_info_marks_truncation() -> None:
-    def next_call(offset: int) -> str:
-        return f"more(offset={offset})"
-
-    assert page_info(_total(29), 0, 5, next_call) == {
+def test_page_marks_truncation() -> None:
+    rows = [{"id": str(i)} for i in range(5)]
+    assert page(rows, _total(29), 0, "more", q="x", limit=None) == {
         "total": 29,
         "returned": 5,
-        "next": "more(offset=5)",
+        "next": 'more(q="x", offset=5)',
+        "results": rows,
     }
-    assert page_info(_total(29), 25, 4, next_call)["next"] is None
-    assert page_info(_total(0), 0, 0, next_call)["next"] is None
+    assert page(rows[:4], _total(29), 25, "more")["next"] is None
+    assert page([], _total(0), 0, "more")["next"] is None
 
 
 def test_shape_adjacency_keys_by_edge_type_and_drops_riskSource() -> None:
@@ -485,7 +484,7 @@ def test_shape_statements_projects_provenance_rows() -> None:
         limit=50,
         offset=0,
     )
-    out = shape_statements(resp, lambda offset: f"more(offset={offset})")
+    out = shape_statements(resp, entity_id="Q7747")
     assert (out["total"], out["returned"], out["next"]) == (2, 2, None)
     assert out["results"][0] == {
         "prop": "alias",
@@ -602,14 +601,11 @@ def test_text_entries_fall_back_to_the_record_without_credits() -> None:
 def test_page_entries_respects_budget_and_marks_the_end() -> None:
     entries = [{"prop": "notes", "text": "x" * 100, "sources": []} for _ in range(5)]
 
-    def more(offset: int) -> str:
-        return f"more(offset={offset})"
-
-    first = page_entries(entries, 0, 300, more)
+    first = page_entries(entries, 0, 300, "more")
     assert (first["returned"], first["next"]) == (2, "more(offset=2)")
-    last = page_entries(entries, 4, 300, more)
+    last = page_entries(entries, 4, 300, "more")
     assert (last["returned"], last["next"]) == (1, None)
-    huge = page_entries([{"prop": "notes", "text": "x" * 1000, "sources": []}], 0, 10, more)
+    huge = page_entries([{"prop": "notes", "text": "x" * 1000, "sources": []}], 0, 10, "more")
     assert huge["returned"] == 1  # an oversized entry still fills a page
 
 

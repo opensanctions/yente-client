@@ -18,6 +18,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from yente_client._util import compact
+
 model: dict[str, Any] = json.loads((Path(__file__).parent / "model.json").read_text())
 
 
@@ -176,15 +178,10 @@ def is_deprecated(schema: str, prop: str) -> bool:
 #
 # The bundled model carries a lot of structural metadata (maxLength, qname,
 # plural, the flattened ancestor closure, …) that's noise for a human reading
-# `ref` or an agent reading `describe_schema`. These helpers project schemata
+# `ref` or an agent reading `describe(kind="schema")`. These helpers project schemata
 # and properties down to the high-signal fields, keeping the descriptions (the
 # part worth reading) and dropping the cruft. One projection so the CLI and the
 # MCP can't drift.
-
-
-def _compact(record: dict[str, Any]) -> dict[str, Any]:
-    """Drop keys whose value is empty (None / "" / [] / {}); bools are kept."""
-    return {k: v for k, v in record.items() if v is not None and v != "" and v != [] and v != {}}
 
 
 def property_matchable(prop: PropertySpec) -> bool:
@@ -200,7 +197,7 @@ def property_matchable(prop: PropertySpec) -> bool:
 
 
 def _project_property(name: str, prop: PropertySpec) -> dict[str, Any]:
-    return _compact(
+    return compact(
         {
             "name": name,
             "label": prop.label,
@@ -240,7 +237,7 @@ def schema_relations(schema: str) -> list[dict[str, Any]]:
     """
     specs = property_specs(schema)
     return [
-        _compact({"name": name, "range": specs[name].range, "reverse": specs[name].reverse})
+        compact({"name": name, "range": specs[name].range, "reverse": specs[name].reverse})
         for name in sorted(specs)
         if specs[name].type == "entity"
     ]
@@ -249,7 +246,7 @@ def schema_relations(schema: str) -> list[dict[str, Any]]:
 def schema_summary(schema: str) -> dict[str, Any]:
     """Project a schema header (no properties): name, description, matchable, lineage."""
     spec = schema_spec(schema)
-    return _compact(
+    return compact(
         {
             "name": schema,
             "description": (spec.description or "").strip(),
@@ -306,7 +303,7 @@ def describe_type(type_name: str) -> dict[str, Any]:
         KeyError: if ``type_name`` is not a type in the bundled model.
     """
     spec = type_spec(type_name)
-    return _compact(
+    return compact(
         {
             "name": type_name,
             "label": spec.label,

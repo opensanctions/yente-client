@@ -10,18 +10,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **`Algorithm.features`** maps each scoring feature name to a new
-  **`FeatureDoc`** (description, coefficient, source link), as served by
-  `/algorithms`.
-- **`yente_client.__version__`**, the installed package version.
-- **`Entity.get(prop)`** returns a property's plain values, without nested
-  entities.
-- **`entities.entity_class(name)`** returns the input class for a schema
-  name, e.g. `entity_class("Person")` → `Person`.
-- **Typed views of the bundled model:** `schemas.schema_spec()`,
-  `property_specs()` (own and inherited), `all_property_specs()` and
-  `type_spec()` return frozen pydantic `SchemaSpec` / `PropertySpec` /
-  `TypeSpec` objects.
+- **SDK helpers:** `Algorithm.features` maps each scoring feature to a
+  `FeatureDoc` (description, coefficient, source link);
+  `yente_client.__version__`; `Entity.get(prop)` for a property's plain
+  values; `entities.entity_class(name)`; and typed views of the bundled model
+  (`schemas.schema_spec()`, `property_specs()`, `all_property_specs()`,
+  `type_spec()`).
 - **Bundled model updated to followthemoney v4.11.3.** New entity classes
   `Control` and `Territory`; `Risk` gains `authority`, `program`,
   `programId` and `programUrl`; `LegalEntity` gains `cikCode`; and the
@@ -34,82 +28,30 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `YENTE_MCP_PUBLIC_URL` set, the server serves the protected resource
   metadata, accepts only valid access tokens from the issuer, forwards them to
   the API, and answers all other requests with `401`.
-- **`YENTE_MCP_DATASET`** sets the collection the `yente-mcp` tools query by
-  default and whose update time they report as `as_of`. A self-hosted yente
-  that loads a different scope sets it to that scope; unset, it is `default`.
 - `py.typed` marker, which the `Typing :: Typed` classifier promises. Without
   it, mypy in downstream projects skips `yente_client`.
 
 ### Changed
 
-- **MCP server output reshaped around what an analyst needs to judge a hit.**
-  `fetch_entity_by_id` now returns a profile: the entity's record and a
-  preview of its sanctions, risk listings, positions held and each other
-  relationship type, with `full=True` for the raw record. Relationship
-  edges keep their own details, and the entity at the far end is abridged
-  like a match candidate. Only top-level records carry
-  `first_seen` / `last_change`. If the
-  relationships can't be read, the record still comes back, flagged with
-  `relations_unavailable`. Prose (biography notes, sanction and risk
-  reasons) moves to the new `fetch_entity_descriptions` tool, which credits
-  each text to its source dataset, puts official sources first and pages long
-  histories. Match candidates carry the compared values
-  behind each scoring feature. `match_entity` gains `cutoff` and returns
-  `near_misses` when nothing clears the default cutoff.
-  `fetch_entity_statements` gains `sort` and reports `last_seen`. Every
-  list carries `next`, the exact tool call for its next page, and a
-  profile's `narrative_text` names the call for its prose. Shown properties are now chosen
-  per schema, so vessels show their IMO number and flag.
-- **One MCP `legend` contract across every tool.** Every entity-bearing
-  response, and the single-record views of `describe_dataset` and
-  `describe_program`, decodes all of its codes in one `legend`:
-  - schemata, with label, plural and ancestors
-  - properties, with label, type and range, including relation keys
-  - enum values, one section per FtM type (`countries`, `languages`,
-    `genders`)
-  - datasets, with title, publisher and `official`
-  - sanctions programs, with title, issuer and territory
-  - the match explanation's scoring features, with descriptions
-
-  The legend covers only codes the response contains, and is left out when
-  there are none. It also carries `links`: templates for citing an entity,
-  dataset or program on the OpenSanctions website, present only against the
-  hosted API. Topic labels stay inline on each entity. The legend of every
-  entity-bearing response carries `as_of`, when the data was last updated.
-- **MCP `describe_dataset` and `describe_program` require a name or key.**
-  The no-argument catalog indexes are gone: they were too large for an
-  agent's context. An unknown name returns the closest matching entries.
-- **MCP page sizes are capped at 25.** A larger `limit` on `match_entity`,
-  `search_entities`, `fetch_entity_relations` or `fetch_entity_statements`
-  is clamped, since big pages overflow MCP clients' tool-output limits.
-- **MCP `describe_topics` returns `{about, topics}`**: a short explanation of
-  the topic families and how the `topics` filter matches, next to the
-  code → label map.
-- **Rewritten MCP server instructions and tool descriptions.** The
-  instructions now explain the data model and the rules shared by every
-  tool; `search_entities` is described as keyword browsing, never a way to
-  decide whether someone is listed.
-- **MCP match candidates, search results and relationship far ends share
-  one abridged shape:** ID, caption, schema, topic labels, and
-  `property_count` / `value_count` / `dataset_count` for what the full record
-  holds. `abridged` names the call that returns the record, e.g.
-  `fetch_entity_by_id(entity_id="Q4398633")`; match candidates add the match evidence.
-  `search_entities`, `fetch_entity_relations` and
-  `fetch_entity_statements` page 10 results by default, at most 25.
-- **MCP `describe_*` tools merged into `describe(kind, name)`.** `kind` is
-  one of `schema`, `topics`, `countries`, `dataset` or `program`.
-- **MCP tool results are sent as text only.** Tools declare no output
-  schema, and results no longer repeat their JSON as `structuredContent`.
-  Every tool now sets the full set of annotation hints (read-only,
-  non-destructive, idempotent, closed-world).
-- **API errors include yente's field-level validation reasons.** A 400
-  whose body lists `errors` next to a generic `detail` now carries both in
-  `APIError.detail`, so the CLI and MCP tool errors say which field failed
-  and why.
-- **Unknown schema names get the same suggestions everywhere.** The MCP's
-  `match_entity` and `describe(kind="schema")` list the closest schemata, as
-  unknown datasets and programs already did. CLI "did you mean" hints share
-  one format, and `screen` row errors use the same wording as `match`.
+- **MCP server output redesigned for screening and research.** Response
+  shapes change throughout:
+  - `fetch_entity_by_id` returns a profile: the record plus previews of its
+    sanctions, risk listings, positions and other relationships
+    (`full=True` for the raw record). Prose moves to the new
+    `fetch_entity_descriptions`, credited per source, official sources first.
+  - `match_entity` shows the compared values behind each scoring feature,
+    gains `cutoff`, and returns `near_misses` when nothing clears it.
+  - Every entity-bearing response decodes its codes in one `legend`, dated by
+    `as_of` (the collection set by the new `YENTE_MCP_DATASET`).
+  - Candidates, search results and relationship far ends are abridged refs.
+    Every list carries `next`, the exact call for its next page; pages
+    default to 10, at most 25.
+  - `describe(kind, name)` replaces the `describe_*` tools; dataset and
+    program lookups need a name and suggest close ones.
+  - Results are sent as text only, the `ftm://` resources are removed, and
+    the server instructions and tool descriptions are rewritten.
+- **API errors include yente's field-level validation reasons** in
+  `APIError.detail`. CLI "did you mean" hints share one format.
 - **`schemas.property_matchable()` takes a `PropertySpec`** instead of a raw
   model dict.
 - **The `yente-mcp` HTTP transport is stateless**, so more than one instance

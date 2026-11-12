@@ -11,6 +11,9 @@ def test_var_names_are_stable() -> None:
     assert env.MCP_NAME_VAR == "YENTE_MCP_NAME"
     assert env.MCP_INSTRUCTIONS_VAR == "YENTE_MCP_INSTRUCTIONS"
     assert env.MCP_DATASET_VAR == "YENTE_MCP_DATASET"
+    assert env.MCP_TRANSPORT_VAR == "YENTE_MCP_TRANSPORT"
+    assert env.MCP_HOST_VAR == "YENTE_MCP_HOST"
+    assert env.MCP_PORT_VAR == "YENTE_MCP_PORT"
 
 
 def test_api_key_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,3 +64,16 @@ def test_mcp_instructions_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_mcp_instructions_defaults_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("YENTE_MCP_INSTRUCTIONS", raising=False)
     assert env.mcp_instructions() == env.DEFAULT_MCP_INSTRUCTIONS
+
+
+def test_mcp_serving_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YENTE_MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("YENTE_MCP_HOST", "0.0.0.0")
+    monkeypatch.setenv("YENTE_MCP_PORT", "9000")
+    assert (env.mcp_transport(), env.mcp_host(), env.mcp_port()) == ("stdio", "0.0.0.0", 9000)
+
+
+def test_mcp_serving_defaults_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("YENTE_MCP_TRANSPORT", "YENTE_MCP_HOST", "YENTE_MCP_PORT"):
+        monkeypatch.delenv(var, raising=False)
+    assert (env.mcp_transport(), env.mcp_host(), env.mcp_port()) == ("http", "127.0.0.1", 8000)

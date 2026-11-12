@@ -4,30 +4,30 @@ Lets an assistant screen people, companies, and other entities against
 sanctions, PEP, and watchlist data and walk their relationships — the same
 matching surface as the yente SDK, framed for an analyst rather than a caller.
 
-Five adapters over :class:`yente_client.AsyncClient` (``match_entity``,
+Adapters over :class:`yente_client.AsyncClient` (``match_entity``,
 ``search_entities``, ``fetch_entity_by_id`` — an entity profile assembled from
-the record and its relations — ``fetch_entity_relations``,
-``fetch_entity_statements``) plus ``describe``, a lookup of schemata, topics
-and countries from the bundled FtM model, or of one dataset or program record
-by name — the catalogs are too large to list whole. Every
-entity-bearing result resolves its own codes — topic labels inline, everything
-else through one ``legend`` per response (see :mod:`~yente_client.mcp.shaping`)
-— so an agent never has to gloss a raw identifier. The server instructions
+the record and its relations — ``fetch_entity_descriptions``,
+``fetch_entity_relations``, ``fetch_entity_statements``) plus ``describe``, a
+lookup of schemata, topics and countries from the bundled FtM model, or of one
+dataset or program record by name — the catalogs are too large to list whole.
+Every entity-bearing result resolves its own codes — topic labels inline,
+everything else through one ``legend`` per response (see
+:mod:`~yente_client.mcp.legend`) — so an agent never has to gloss a raw
+identifier. The server instructions
 (:data:`yente_client.env.DEFAULT_MCP_INSTRUCTIONS`) carry the data model and
-the rules shared by every tool; tool docstrings cover only their own tool.
-The ``ftm://schema`` resources mirror
-``describe(kind="schema")`` for resource-capable clients; anything the model must
-dereference mid-conversation is a tool, not a resource, since clients don't
-reliably read resources. Matching algorithms are deliberately not exposed:
+the rules shared by every tool; tool docstrings cover only their own tool. The
+server exposes no resources: anything the model must read mid-conversation is a
+tool, since clients don't reliably read resources. Gender values need no
+lookup; they explain themselves. Matching algorithms are deliberately not exposed:
 algorithm choice is a tuning detail below this server's altitude — the server
 default applies, and only its feature descriptions reach the legend; use the
 SDK or CLI to experiment. Each request carries the caller's API key, or with
 OAuth2 on its access token, as a bearer token, forwarded downstream (see
 :mod:`yente_client.mcp.auth`).
 
-Keep this module thin: the real logic lives in :mod:`yente_client.schemas` and
-:mod:`~yente_client.mcp.shaping`. Anything beyond plumbing belongs there so
-it stays testable without FastMCP.
+Keep this module thin: the real logic lives in :mod:`yente_client.schemas`,
+:mod:`~yente_client.mcp.shaping` and :mod:`~yente_client.mcp.legend`. Anything
+beyond plumbing belongs there so it stays testable without FastMCP.
 """
 
 import asyncio
@@ -353,20 +353,11 @@ def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
     try:
         schema_cls = entity_class(schema)
     except KeyError:
-        raise _unknown_schema(schema) from None
+        raise ToolError(shaping.unknown_schema(schema)) from None
     try:
         return schema_cls.model_validate(properties)
     except ValidationError as exc:
         raise ToolError(f"Invalid properties for schema {schema!r}: {exc}") from exc
-
-
-def _unknown_schema(name: str) -> ToolError:
-    """Report an unknown schema name with the closest real ones."""
-    titles = {
-        schema: label if (label := schemas.schema_spec(schema).label) != schema else None
-        for schema in schemas.model["schemata"]
-    }
-    return ToolError(shaping.unknown_name("schema", name, titles))
 
 
 # ----- tools -----
@@ -486,23 +477,20 @@ async def search_entities(
             countries=countries,
             topics=topics,
         )
-    results = [shaping.shape(r, "ref") for r in resp.results]
-
-    def next_call(next_offset: int) -> str:
-        return shaping.tool_call(
-            "search_entities",
-            q=q,
-            dataset=None if dataset == DATASET else dataset,
-            schema=schema,
-            countries=countries,
-            topics=topics,
-            limit=None if limit == _PAGE_SIZE else limit,
-            offset=next_offset,
-            fuzzy=fuzzy or None,
-            simple=simple or None,
-        )
-
-    out = {**shaping.page_info(resp.total, offset, len(results), next_call), "results": results}
+    out = shaping.page(
+        [shaping.shape(r, "ref") for r in resp.results],
+        resp.total,
+        offset,
+        "search_entities",
+        q=q,
+        dataset=None if dataset == DATASET else dataset,
+        schema=schema,
+        countries=countries,
+        topics=topics,
+        limit=None if limit == _PAGE_SIZE else limit,
+        fuzzy=fuzzy or None,
+        simple=simple or None,
+    )
     return await _with_legend(out, client)
 
 
@@ -575,7 +563,7 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     client = _resolve_client()
     with _tool_errors():
         entity = await client.fetch(entity_id, nested=False)
-    text_props = shaping.text_property_names(entity.schema_)
+    text_props = shaping.prose_names(entity.schema_)
     edge_props = shaping.designation_props(entity.schema_)
     statement_calls = [
         client.statements(canonical_id=entity.id, prop=prop, limit=_STATEMENT_READ)
@@ -608,13 +596,11 @@ async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[
     records = legend.dataset_records(catalog) if catalog else {}
     unofficial = {name for name, rec in records.items() if rec.get("official") is False}
     entries = shaping.text_entries(entity, statements, designations, unofficial)
-
-    def next_call(next_offset: int) -> str:
-        return shaping.tool_call(
-            "fetch_entity_descriptions", entity_id=entity.id, offset=next_offset
+    out.update(
+        shaping.page_entries(
+            entries, offset, _TEXT_PAGE_CHARS, "fetch_entity_descriptions", entity_id=entity.id
         )
-
-    out.update(shaping.page_entries(entries, offset, _TEXT_PAGE_CHARS, next_call))
+    )
     return await _with_legend(out, client)
 
 
@@ -704,19 +690,15 @@ async def fetch_entity_statements(
             limit=_cap(limit),
             offset=offset,
         )
-
-    def next_call(next_offset: int) -> str:
-        return shaping.tool_call(
-            "fetch_entity_statements",
-            entity_id=entity_id,
-            prop=prop,
-            dataset=dataset,
-            sort=sort,
-            limit=None if limit == _PAGE_SIZE else limit,
-            offset=next_offset,
-        )
-
-    return await _with_legend(shaping.shape_statements(resp, next_call), client)
+    out = shaping.shape_statements(
+        resp,
+        entity_id=entity_id,
+        prop=prop,
+        dataset=dataset,
+        sort=sort,
+        limit=None if limit == _PAGE_SIZE else limit,
+    )
+    return await _with_legend(out, client)
 
 
 _TOPICS_ABOUT = (
@@ -771,7 +753,7 @@ async def describe(
         if name is None:
             return {"schemata": schemas.schema_index(matchable_only=True)}
         if not schemas.has_schema(name):
-            raise _unknown_schema(name)
+            raise ToolError(shaping.unknown_schema(name))
         return schemas.describe_schema(name)
     if kind == "topics":
         return {"about": _TOPICS_ABOUT, "topics": schemas.type_values("topic")}
@@ -786,12 +768,7 @@ async def _describe_dataset(name: str) -> dict[str, Any]:
     for dataset in resp.datasets:
         if dataset.name == name:
             out = dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
-            codes = legend.collect_codes(out)
-            if dataset.coverage is not None:
-                codes.add_values("country", dataset.coverage.countries)
-            if dataset.publisher is not None:
-                codes.add_values("country", [dataset.publisher.country])
-            return await _with_legend(out, client, codes, as_of=False)
+            return await _with_legend(out, client, legend.dataset_codes(dataset), as_of=False)
     titles = {d.name: d.title for d in resp.datasets}
     raise ToolError(shaping.unknown_name("dataset", name, titles))
 
@@ -804,35 +781,6 @@ async def _describe_program(key: str) -> dict[str, Any]:
     for program in catalog:
         if program.key == key or key in program.aliases:
             out = program.model_dump(mode="json", exclude_none=True)
-            codes = legend.collect_codes(out)
-            territory = program.issuer.territory if program.issuer else None
-            codes.add_values("country", [territory, *program.target_territories])
-            if program.dataset:
-                codes.datasets.add(program.dataset)
-            return await _with_legend(out, client, codes, as_of=False)
+            return await _with_legend(out, client, legend.program_codes(program), as_of=False)
     titles = {p.key: p.title for p in catalog}
     raise ToolError(shaping.unknown_name("program", key, titles))
-
-
-# ----- resources: ftm:// (static, bundled model, no server call) -----
-
-
-@mcp.resource("ftm://schemata")
-def ftm_schemata() -> list[dict[str, Any]]:
-    """Index of matchable FtM schemata."""
-    return schemas.schema_index(matchable_only=True)
-
-
-@mcp.resource("ftm://schema/{name}")
-def ftm_schema(name: str) -> dict[str, Any]:
-    """Property detail for one FtM schema."""
-    return schemas.describe_schema(name)
-
-
-# Topic / country vocabularies are served by the describe *tool* above, not
-# resources: the model needs them to pick filter values mid-conversation and
-# clients don't reliably read resources (for the same reason, dataset lookup is
-# there too). Gender values ("male", "female", …) are
-# self-explanatory, so there's no lookup for them at all. There is no yente://
-# resource for live server state: the one candidate, the algorithm catalog, is
-# deliberately unexposed (see the module docstring).

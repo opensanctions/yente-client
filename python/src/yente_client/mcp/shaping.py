@@ -35,7 +35,7 @@ Pure functions over the SDK response models — no FastMCP, unit-testable.
 import difflib
 import functools
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from datetime import datetime
 from typing import Any, Literal
@@ -112,7 +112,7 @@ def shape(
     if topics:
         shaped["topics"] = topics
     if level == "ref":
-        values = [v for v in _summary_values(entity).values()]
+        values = list(_summary_values(entity).values())
         shaped["property_count"] = len(values)
         shaped["value_count"] = sum(len(v) for v in values)
         shaped["dataset_count"] = len(entity.datasets)
@@ -192,20 +192,22 @@ def tool_call(name: str, **args: Any) -> str:
     return f"{name}({parts})"
 
 
-def page_info(
-    total: TotalSpec, offset: int, returned: int, next_call: Callable[[int], str]
+def page(
+    results: list[dict[str, Any]], total: TotalSpec, offset: int, tool: str, **args: Any
 ) -> dict[str, Any]:
-    """Build the paging envelope every list carries.
+    """Wrap one page of ``results`` in the paging envelope every list carries.
 
-    ``next`` is the call for the following page, built by ``next_call`` from
-    its offset, and ``None`` exactly when the list is complete, so a model
-    can't mistake a first page for the whole set.
+    ``next`` is the ``tool`` call for the following page — ``args`` plus its
+    offset — and ``None`` exactly when the list is complete, so a model can't
+    mistake a first page for the whole set. Leave arguments at the tool's
+    defaults out of ``args`` (as ``None``) to keep the call short.
     """
-    end = offset + returned
+    end = offset + len(results)
     return {
         "total": total.value,
-        "returned": returned,
-        "next": next_call(end) if end < total.value else None,
+        "returned": len(results),
+        "next": tool_call(tool, **args, offset=end) if end < total.value else None,
+        "results": results,
     }
 
 
@@ -232,13 +234,15 @@ def shape_relation_page(
         if prop in DESIGNATION_SECTIONS:
             row.pop("caption")
         results.append(row)
-
-    def next_call(offset: int) -> str:
-        return tool_call(
-            "fetch_entity_relations", entity_id=source_id, prop=prop, limit=limit, offset=offset
-        )
-
-    return {**page_info(block.total, block.offset, len(results), next_call), "results": results}
+    return page(
+        results,
+        block.total,
+        block.offset,
+        "fetch_entity_relations",
+        entity_id=source_id,
+        prop=prop,
+        limit=limit,
+    )
 
 
 def shape_adjacency(resp: AdjacentResponse) -> dict[str, Any]:
@@ -276,15 +280,27 @@ def shape_statement(stmt: Statement) -> dict[str, Any]:
     return rec
 
 
-def shape_statements(resp: StatementsResponse, next_call: Callable[[int], str]) -> dict[str, Any]:
-    """Shape a statements page: paging envelope plus projected rows."""
+def shape_statements(resp: StatementsResponse, **args: Any) -> dict[str, Any]:
+    """Shape a statements page; ``args`` are the ``fetch_entity_statements`` call's."""
     results = [shape_statement(s) for s in resp.results]
-    return {**page_info(resp.total, resp.offset, len(results), next_call), "results": results}
+    return page(results, resp.total, resp.offset, "fetch_entity_statements", **args)
 
 
-def text_property_names(schema: str) -> tuple[str, ...]:
-    """The prose properties of ``schema`` worth reading, e.g. ``notes``, ``reason``."""
-    return _prose_names(schema)
+@functools.cache
+def prose_names(schema: str) -> tuple[str, ...]:
+    """The prose properties of ``schema`` worth reading, e.g. ``notes``, ``reason``.
+
+    Text-typed and not hidden, sorted; empty for an unknown schema.
+    """
+    if not schemas.has_schema(schema):
+        return ()
+    return tuple(
+        sorted(
+            name
+            for name, prop in property_specs(schema).items()
+            if prop.type in _PROSE_TYPES and not prop.hidden
+        )
+    )
 
 
 def designation_props(schema: str) -> tuple[str, ...]:
@@ -353,22 +369,23 @@ def text_entries(
 
 
 def page_entries(
-    entries: list[dict[str, Any]], offset: int, budget: int, next_call: Callable[[int], str]
+    entries: list[dict[str, Any]], offset: int, budget: int, tool: str, **args: Any
 ) -> dict[str, Any]:
     """Page ``entries`` from ``offset`` until about ``budget`` characters of JSON.
 
     A page always holds at least one entry, however long, so paging can't stall.
+    ``tool`` and ``args`` name the call for the next page, as in :func:`page`.
     """
-    page: list[dict[str, Any]] = []
+    selected: list[dict[str, Any]] = []
     used = 0
     for entry in entries[offset:]:
         size = len(json.dumps(entry, ensure_ascii=False))
-        if page and used + size > budget:
+        if selected and used + size > budget:
             break
-        page.append(entry)
+        selected.append(entry)
         used += size
     total = TotalSpec(value=len(entries), relation="eq")
-    return {**page_info(total, offset, len(page), next_call), "results": page}
+    return page(selected, total, offset, tool, **args)
 
 
 def unknown_name(kind: str, name: str, titles: Mapping[str, str | None]) -> str:
@@ -391,6 +408,15 @@ def unknown_name(kind: str, name: str, titles: Mapping[str, str | None]) -> str:
         return f"Unknown {kind} {name!r}, and nothing close to it."
     listed = "; ".join(f"{key} ({titles[key]})" if titles[key] else key for key in hits)
     return f"Unknown {kind} {name!r}. Closest: {listed}."
+
+
+def unknown_schema(name: str) -> str:
+    """Build the error for an unknown schema name, listing the closest schemata."""
+    titles = {
+        schema: label if (label := schema_spec(schema).label) != schema else None
+        for schema in schemas.model["schemata"]
+    }
+    return unknown_name("schema", name, titles)
 
 
 def _properties(entity: Entity, source_id: str | None, nested: Level) -> dict[str, list[Any]]:
@@ -416,14 +442,10 @@ def _stub_properties(entity: Entity) -> dict[str, list[str]]:
 
     A ``name`` that only repeats the caption is left out.
     """
-    out: dict[str, list[str]] = {}
-    for name in _featured_names(entity.schema_):
-        values = entity.get(name)
-        if name == "name" and values == [entity.caption]:
-            continue
-        if values:
-            out[name] = values
-    return out
+    props = _plain_values(entity, _featured_names(entity.schema_))
+    if props.get("name") == [entity.caption]:
+        del props["name"]
+    return props
 
 
 def _summary_values(entity: Entity) -> dict[str, list[Any]]:
@@ -436,12 +458,12 @@ def _summary_values(entity: Entity) -> dict[str, list[Any]]:
 
 def _prose_values(entity: Entity) -> dict[str, list[str]]:
     """The entity's prose property values, by property name."""
-    out: dict[str, list[str]] = {}
-    for name in _prose_names(entity.schema_):
-        values = entity.get(name)
-        if values:
-            out[name] = values
-    return out
+    return _plain_values(entity, prose_names(entity.schema_))
+
+
+def _plain_values(entity: Entity, names: tuple[str, ...]) -> dict[str, list[str]]:
+    """The entity's non-empty plain values for ``names``, by property name."""
+    return {name: values for name in names if (values := entity.get(name))}
 
 
 def _order_sources(
@@ -465,20 +487,6 @@ def _entry_rank(entry: dict[str, Any], unofficial: AbstractSet[str]) -> tuple[bo
 
 
 @functools.cache
-def _prose_names(schema: str) -> tuple[str, ...]:
-    """``schema``'s visible prose properties (text-typed, not hidden), sorted."""
-    if not schemas.has_schema(schema):
-        return ()
-    return tuple(
-        sorted(
-            name
-            for name, prop in property_specs(schema).items()
-            if prop.type in _PROSE_TYPES and not prop.hidden
-        )
-    )
-
-
-@functools.cache
 def _featured_names(schema: str) -> tuple[str, ...]:
     """``schema``'s FtM featured properties, minus entity- and topic-typed ones."""
     if not schemas.has_schema(schema):
@@ -496,7 +504,7 @@ def _featured_names(schema: str) -> tuple[str, ...]:
 def _summary_names(schema: str) -> frozenset[str]:
     """Names of ``schema``'s properties a summary shows (empty for unknown schemata).
 
-    Stubs and briefs narrow this to the featured names.
+    Stubs narrow this to the featured names.
     """
     if not schemas.has_schema(schema):
         return frozenset()

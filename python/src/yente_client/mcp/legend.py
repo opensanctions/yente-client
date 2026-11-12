@@ -15,12 +15,12 @@ Pure functions — no FastMCP, unit-testable.
 import functools
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from yente_client import schemas
+from yente_client._util import compact
 from yente_client.mcp.shaping import PROFILE_SECTIONS
-from yente_client.models import AlgorithmsResponse, DatasetsResponse, Program
+from yente_client.models import AlgorithmsResponse, Dataset, DatasetsResponse, Program
 from yente_client.schemas import (
     PropertySpec,
     all_property_specs,
@@ -29,11 +29,6 @@ from yente_client.schemas import (
     schema_spec,
     type_spec,
 )
-
-
-def _compact(record: dict[str, Any]) -> dict[str, Any]:
-    """Drop keys whose value is empty (None / "" / [] / {}); bools and zeros are kept."""
-    return {k: v for k, v in record.items() if v is not None and v != "" and v != [] and v != {}}
 
 
 @dataclass
@@ -69,7 +64,7 @@ class LegendCodes:
         if prop.label is None or name in self.properties:
             return
         rec = {"label": prop.label, "type": prop.type, "range": prop.range}
-        self.properties[name] = _compact(rec)
+        self.properties[name] = compact(rec)
 
     def add_property_values(
         self, name: str, prop: PropertySpec | None, values: Iterable[str]
@@ -152,7 +147,7 @@ def dataset_records(resp: DatasetsResponse) -> dict[str, dict[str, Any]]:
             "publisher": d.publisher.name if d.publisher else None,
             "official": d.publisher.official if d.publisher else None,
         }
-        out[d.name] = _compact(rec)
+        out[d.name] = compact(rec)
     return out
 
 
@@ -168,8 +163,28 @@ def program_records(programs: list[Program]) -> dict[str, dict[str, Any]]:
             "issuer": p.issuer.name if p.issuer else None,
             "territory": p.issuer.territory if p.issuer else None,
         }
-        out[p.key] = _compact(rec)
+        out[p.key] = compact(rec)
     return out
+
+
+def dataset_codes(dataset: Dataset) -> LegendCodes:
+    """Gather the codes of one ``describe(kind="dataset")`` record."""
+    codes = LegendCodes()
+    if dataset.coverage is not None:
+        codes.add_values("country", dataset.coverage.countries)
+    if dataset.publisher is not None:
+        codes.add_values("country", [dataset.publisher.country])
+    return codes
+
+
+def program_codes(program: Program) -> LegendCodes:
+    """Gather the codes of one ``describe(kind="program")`` record."""
+    codes = LegendCodes()
+    territory = program.issuer.territory if program.issuer else None
+    codes.add_values("country", [territory, *program.target_territories])
+    if program.dataset:
+        codes.datasets.add(program.dataset)
+    return codes
 
 
 def as_of(resp: DatasetsResponse, dataset: str) -> str | None:
@@ -180,7 +195,7 @@ def as_of(resp: DatasetsResponse, dataset: str) -> str | None:
     """
     for d in resp.datasets:
         if d.name == dataset:
-            return _timestamp(d.updated_at)
+            return d.updated_at.isoformat() if d.updated_at is not None else None
     return None
 
 
@@ -249,7 +264,7 @@ def _schema_record(schema: str) -> dict[str, Any]:
         "plural": spec.plural,
         "ancestors": sorted(set(spec.schemata) - {schema}),
     }
-    return _compact(rec)
+    return compact(rec)
 
 
 @functools.cache
@@ -264,10 +279,6 @@ def _enum_types() -> dict[str, str]:
         for name, spec in specs.items()
         if spec.values and name != "topic"
     }
-
-
-def _timestamp(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
 
 
 def _resolve(codes: set[str], labels: Mapping[str, str]) -> dict[str, str]:

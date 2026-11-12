@@ -37,6 +37,15 @@ server accepts. Setting it makes the server an OAuth2 resource server."""
 MCP_PUBLIC_URL_VAR = "YENTE_MCP_PUBLIC_URL"
 """Name of the env var that sets the public root URL of the MCP server."""
 
+MCP_TRANSPORT_VAR = "YENTE_MCP_TRANSPORT"
+"""Name of the env var that picks the MCP server's transport (``http`` or ``stdio``)."""
+
+MCP_HOST_VAR = "YENTE_MCP_HOST"
+"""Name of the env var that sets the MCP server's bind host for the http transport."""
+
+MCP_PORT_VAR = "YENTE_MCP_PORT"
+"""Name of the env var that sets the MCP server's bind port for the http transport."""
+
 DEFAULT_MCP_NAME = "yente"
 """MCP server name advertised when ``$YENTE_MCP_NAME`` is unset."""
 
@@ -148,3 +157,18 @@ def mcp_oauth_issuer() -> str | None:
 def mcp_public_url() -> str | None:
     """Return ``$YENTE_MCP_PUBLIC_URL``, or ``None`` if unset."""
     return os.environ.get(MCP_PUBLIC_URL_VAR) or None
+
+
+def mcp_transport() -> str:
+    """Return ``$YENTE_MCP_TRANSPORT``, or ``"http"`` if unset."""
+    return os.environ.get(MCP_TRANSPORT_VAR, "http")
+
+
+def mcp_host() -> str:
+    """Return ``$YENTE_MCP_HOST``, or ``"127.0.0.1"`` if unset."""
+    return os.environ.get(MCP_HOST_VAR, "127.0.0.1")
+
+
+def mcp_port() -> int:
+    """Return ``$YENTE_MCP_PORT``, or ``8000`` if unset."""
+    return int(os.environ.get(MCP_PORT_VAR, "8000"))

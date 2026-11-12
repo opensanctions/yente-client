@@ -8,8 +8,7 @@ where a claim came from — with the same match-first semantics as the SDK
 and CLI.
 
 !!! note "Status"
-    The MCP server is new; tool response shapes may still change between
-    releases.
+    Tool response shapes may still change between releases.
 
 ## Install and run
 
@@ -39,6 +38,7 @@ environment variable:
 | `--port` | `YENTE_MCP_PORT` | `8000` | Bind port for the HTTP transport. |
 | — | `YENTE_BASE_URL` | `https://api.opensanctions.org` | The yente / OpenSanctions API the server forwards calls to. |
 | — | `OPENSANCTIONS_API_KEY` | unset | Fallback key when a request carries no bearer token. Not used with OAuth2. |
+| — | `YENTE_MCP_DATASET` | `default` | Collection the tools query unless a call names another, and whose update time responses report as `as_of`. Set it to the scope your yente loads. |
 | — | `YENTE_MCP_OAUTH_ISSUER` | unset | OAuth2 issuer whose access tokens the server accepts. See [OAuth2 login](#oauth2-login). |
 | — | `YENTE_MCP_PUBLIC_URL` | unset | Public root URL of the server, e.g. `https://mcp.example.com`. Needed with `YENTE_MCP_OAUTH_ISSUER`. |
 
@@ -47,7 +47,7 @@ answer any request.
 
 ## Authentication
 
-The server holds no secret of its own. Each MCP request carries the caller's
+The server needs no secret of its own. Each MCP request carries the caller's
 OpenSanctions API key as `Authorization: Bearer <key>`, and the server
 forwards it downstream — validation, quota, and billing happen at the API
 gateway, and the caller screens as themselves. A request without a bearer
@@ -68,8 +68,9 @@ server then:
   `/.well-known/jwks.json`), issuer, expiry and audience. The audience must be
   `$YENTE_MCP_PUBLIC_URL/mcp`, which MCP clients request as the RFC 8707
   `resource`;
-- answers any other request, an API key included, with `401` and a `WWW-Authenticate` header that points at the metadata. The
-  client then logs in or refreshes its token.
+- answers any other request, an API key included, with `401` and a
+  `WWW-Authenticate` header that points at the metadata. The client then logs
+  in or refreshes its token.
 
 The tools forward the access token to the API. The server never uses
 `OPENSANCTIONS_API_KEY` in this mode. The issuer must put
@@ -155,7 +156,8 @@ Every response follows the same shape:
   the query and candidate values each one compared, such as two birth dates
   that disagree. When nothing clears the cutoff, the closest candidates come
   back as `near_misses`, so a "no match" can still be explained. `checked`
-  echoes the dataset and topics that were screened.
+  echoes the scope that was screened: the dataset, and any topics, threshold
+  or cutoff the call set.
 - **Every entity response is dated.** The `legend` carries `as_of`, when the
   data was last updated.
 - **Lists** carry `total`, `returned` and `next`, the exact call for the
@@ -191,6 +193,3 @@ Use the [SDK](tutorial.md) or [CLI](cli.md) to experiment with algorithms.
 `YENTE_MCP_NAME` and `YENTE_MCP_INSTRUCTIONS` override the name and
 instructions the server advertises to MCP clients, so a self-hosted yente
 deployment can present its own identity without forking the server.
-`YENTE_MCP_DATASET` names the collection the tools query by default and whose
-update time responses report as `as_of`; set it to the scope your yente
-loads (unset, it is `default`).
