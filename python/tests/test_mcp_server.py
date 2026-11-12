@@ -67,12 +67,15 @@ def _use_match_response(
     make_async_client: Callable[..., AsyncClient],
     body: dict[str, Any],
     catalog: dict[str, Any],
+    algorithms: dict[str, Any],
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.startswith("/match/"):
             return httpx.Response(200, json=body)
         if request.url.path == "/catalog":
             return httpx.Response(200, json=catalog)
+        if request.url.path == "/algorithms":
+            return httpx.Response(200, json=algorithms)
         return httpx.Response(404, json={"detail": "not mocked"})
 
     client = make_async_client(handler=handler)
@@ -90,11 +93,17 @@ async def test_match_topics_gather_only_matching_candidates(
     near.update(id="NK-other", score=0.5, match=False)
     near["properties"]["topics"] = ["role.pep"]
     response["results"].append(near)
-    _use_match_response(monkeypatch, make_async_client, body, load_fixture("catalog"))
+    _use_match_response(
+        monkeypatch, make_async_client, body, load_fixture("catalog"), load_fixture("algorithms")
+    )
 
     out = await _call("match_entity", {"schema": "Person", "properties": {"name": ["Zakharov"]}})
     assert [r["id"] for r in out["results"]] == ["NK-aU5ybkbRFJucf8YMwsJvDw", "NK-other"]
     assert out["match_topics"] == {"sanction": "Sanctioned"}
+    assert out["results"][0]["explanation"]["name_match"] == {
+        "contribution": 0.92,
+        "detail": "exact match on lastName",
+    }
 
 
 async def test_match_names_query_and_suggested_properties(

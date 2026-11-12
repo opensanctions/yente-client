@@ -395,7 +395,8 @@ async def match_entity(
 
     Each candidate has a `score` (0-1), `match` (score at or above the
     threshold) and an `explanation`: the scoring features with the query and
-    candidate values each compared. A fuzzy name with nothing else agreeing is
+    candidate values each compared, each with its signed `contribution`; the
+    contributions add up to the score. A fuzzy name with nothing else agreeing is
     a lead, not an identification; identifiers and dates the query lacked are
     what would settle it. Candidates come in score order, which reflects match
     quality, not risk; `match_topics` gathers the topics of every candidate
@@ -428,7 +429,9 @@ async def match_entity(
         "threshold": threshold,
         "cutoff": cutoff,
     }
-    results = [shaping.shape_scored(r) for r in resp.results]
+    algorithms = await _soft(_algorithms, client.algorithms)
+    coefficients = legend.feature_coefficients(algorithms) if algorithms else {}
+    results = [shaping.shape_scored(r, coefficients) for r in resp.results]
     query_properties = sorted(name for name, values in properties.items() if values)
     suggested = [p for p in shaping.featured_names(schema) if p not in query_properties]
     match_topics: dict[str, str] = {}
@@ -449,7 +452,7 @@ async def match_entity(
         if not out[key]:
             del out[key]
     if near_misses is not None and near_misses.results:
-        out["near_misses"] = [shaping.shape_scored(r) for r in near_misses.results]
+        out["near_misses"] = [shaping.shape_scored(r, coefficients) for r in near_misses.results]
     # `checked` echoes the caller's own scope, which needs no glossing.
     codes = legend.collect_codes({k: v for k, v in out.items() if k != "checked"})
     codes.add_properties(schema, [*query_properties, *suggested])

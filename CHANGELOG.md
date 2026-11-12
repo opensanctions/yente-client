@@ -46,7 +46,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     gains `cutoff`, and returns `near_misses` when nothing clears it. Its
     root names the `query_properties` sent, the schema's key properties the
     query lacked (`query_suggested_properties`), and the topics of every
-    matching candidate (`match_topics`).
+    matching candidate (`match_topics`). Each scoring feature shows its
+    signed `contribution` to the score, and features that didn't move it are
+    listed with what they compared.
   - Every entity-bearing response decodes its codes in one `legend`, dated by
     `as_of` (the collection set by the new `YENTE_MCP_DATASET`).
   - Candidates, search results and relationship far ends are abridged refs.

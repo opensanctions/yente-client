@@ -10,6 +10,7 @@ from yente_client.mcp.legend import (
     build_legend,
     collect_codes,
     dataset_records,
+    feature_coefficients,
     feature_descriptions,
     program_records,
 )
@@ -216,3 +217,8 @@ def test_feature_descriptions_follow_the_default_alias(load_fixture) -> None:
     features = feature_descriptions(resp)
     assert features["name_match"].startswith("Match two entities")
     assert "dob_year_disjoint" in features
+
+
+def test_feature_coefficients_follow_the_default_alias(load_fixture) -> None:
+    resp = AlgorithmsResponse.model_validate(load_fixture("algorithms"))
+    assert feature_coefficients(resp) == {"name_match": 1.0, "dob_year_disjoint": -0.1}

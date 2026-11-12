@@ -68,10 +68,6 @@ _BULK_TYPES: frozenset[str] = _PROSE_TYPES | {"json", "checksum", "mimetype"}
 # How many catalog entries an unknown-name error suggests.
 _SUGGESTIONS = 5
 
-# How many positive scoring features to surface per candidate. Negative
-# features are always kept: penalties are what explain a near-miss.
-_EXPLANATION_LIMIT = 3
-
 # Relation props suppressed from the adjacency projection. `riskSource` is a
 # `Thing` entity property with no reverse: the adjacency endpoint reports a count
 # for it but resolves no counterparties — a phantom edge. An entity's risk basis
@@ -135,12 +131,18 @@ def shape(
     return shaped
 
 
-def shape_scored(entity: ScoredEntity) -> dict[str, Any]:
-    """Project a match candidate: a ``ref`` plus the match evidence."""
+def shape_scored(
+    entity: ScoredEntity, coefficients: Mapping[str, float] | None = None
+) -> dict[str, Any]:
+    """Project a match candidate: a ``ref`` plus the match evidence.
+
+    ``coefficients`` maps the scoring algorithm's features to their signed
+    weights; without them the explanation falls back to raw feature scores.
+    """
     shaped = shape(entity, "ref")
     shaped["score"] = entity.score
     shaped["match"] = entity.match
-    shaped["explanation"] = _explanation(entity)
+    shaped["explanation"] = _explanation(entity, coefficients or {})
     return shaped
 
 
@@ -524,25 +526,38 @@ def _topic_labels(entity: Entity) -> dict[str, str]:
     return {code: vocab.get(code, code) for code in entity.get("topics")}
 
 
-def _explanation(entity: ScoredEntity) -> dict[str, dict[str, Any]]:
-    """Return the features that explain the score, with the values they compared.
+def _explanation(
+    entity: ScoredEntity, coefficients: Mapping[str, float]
+) -> dict[str, dict[str, Any]]:
+    """Return every scoring feature with its effect on the score and the values it compared.
 
-    The strongest positive features plus every negative one, ranked by
-    absolute score. ``detail`` / ``query`` / ``candidate`` carry the evidence
-    (e.g. which two birth dates disagreed) and appear only when the matcher
-    supplied them.
+    The API reports feature scores unsigned; a feature's ``contribution`` is
+    its score times its algorithm coefficient, so penalties come out negative
+    and a feature that didn't fire shows 0 with what it compared (e.g. two
+    birth dates that agree). A feature without a known coefficient keeps its
+    raw ``score``. Ranked by the size of that number. ``detail`` / ``query`` /
+    ``candidate`` appear only when the matcher supplied them.
     """
-    features = entity.contributing_explanations.items()
-    positive = sorted((kv for kv in features if kv[1].score > 0), key=lambda kv: -kv[1].score)
-    negative = [kv for kv in features if kv[1].score < 0]
-    ranked = sorted(
-        positive[:_EXPLANATION_LIMIT] + negative, key=lambda kv: abs(kv[1].score), reverse=True
+    shaped = {
+        name: _feature(feature, coefficients.get(name))
+        for name, feature in entity.explanations.items()
+    }
+    return dict(
+        sorted(
+            shaped.items(),
+            key=lambda kv: abs(kv[1].get("contribution", kv[1].get("score", 0.0))),
+            reverse=True,
+        )
     )
-    return {name: _feature(feature) for name, feature in ranked}
 
 
-def _feature(feature: FeatureResult) -> dict[str, Any]:
-    rec: dict[str, Any] = {"score": feature.score}
+def _feature(feature: FeatureResult, coefficient: float | None) -> dict[str, Any]:
+    rec: dict[str, Any] = (
+        {"score": feature.score}
+        if coefficient is None
+        # `+ 0.0` turns the -0.0 of an unfired penalty into 0.0.
+        else {"contribution": feature.score * coefficient + 0.0}
+    )
     for key in ("detail", "query", "candidate"):
         value = getattr(feature, key)
         if value:
