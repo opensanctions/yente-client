@@ -71,6 +71,14 @@ class Entity(BaseModel):
     last_seen: datetime | None = None
     last_change: datetime | None = None
 
+    def get(self, prop: str) -> list[str]:
+        """Return a property's plain values, leaving out nested entities.
+
+        Use this for display and export; walk ``properties`` directly when the
+        nested entities (a sanction's details, an owner) matter.
+        """
+        return [v for v in self.properties.get(prop, []) if isinstance(v, str)]
+
 
 class ScoredEntity(Entity):
     """An ``Entity`` plus match-specific scoring fields.
@@ -180,17 +188,33 @@ class StatusResponse(BaseModel):
     status: str
 
 
+class FeatureDoc(BaseModel):
+    """Documentation for one scoring feature of a matching algorithm.
+
+    Keys of ``Algorithm.features`` are the feature names that appear in a
+    match result's ``explanations``; read this to say what a feature compared.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    description: str | None = None
+    coefficient: float | None = None
+    url: str | None = None
+
+
 class Algorithm(BaseModel):
     """Description of one enabled matching algorithm.
 
-    Returned in the ``algorithms`` list of ``AlgorithmsResponse``. The
-    ``docs`` dict maps feature name → human-readable description.
+    Returned in the ``algorithms`` list of ``AlgorithmsResponse``.
+    ``features`` documents each scoring feature by name; ``docs`` carries the
+    algorithm's free-form documentation as the server sends it.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     name: str
     description: str | None = None
+    features: dict[str, FeatureDoc] = Field(default_factory=dict)
     docs: dict[str, Any] | None = None
 
 

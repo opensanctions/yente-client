@@ -4,20 +4,23 @@ import copy
 from collections.abc import Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Final, Literal, Self, overload
-from urllib.parse import quote
 
 import httpx
 
-from yente_client._http import prepare_http_kwargs, raise_for_response
+from yente_client._http import ETagCache, prepare_http_kwargs, read_json
 from yente_client._translation import (
-    merge_filters,
-    serialise_match_filters,
-    serialise_search_filters,
+    check_matchable_schema,
+    drop_none,
+    entity_path,
+    match_body,
+    match_request,
+    search_request,
+    statements_unavailable,
     unwrap_match_response,
 )
 from yente_client.entities import EntityInput
 from yente_client.env import DEFAULT_BASE_URL
-from yente_client.exceptions import ConfigurationError, NotFoundError, TransportError
+from yente_client.exceptions import NotFoundError, TransportError
 from yente_client.filters import MatchFilters, SearchFilters
 from yente_client.models import (
     AdjacentPropertyResponse,
@@ -32,7 +35,6 @@ from yente_client.models import (
     StatementsResponse,
     StatusResponse,
 )
-from yente_client.schemas import is_matchable_schema, matchable_schemata
 
 BEST_ALGORITHM: Final[str] = "best"
 """Canonical algorithm name resolving to whichever matching algorithm the
@@ -43,55 +45,6 @@ PROGRAMS_URL: Final[str] = "https://data.opensanctions.org/meta/programs.json"
 """Public artifact carrying the sanctions-program catalog. Not part of the
 yente API: it lives on the OpenSanctions data bucket and describes the
 published data regardless of which server ``base_url`` points at."""
-
-
-def _check_matchable_schema(entity: EntityInput) -> None:
-    """Raise :class:`ConfigurationError` if ``entity``'s schema can't be matched."""
-    schema_name = entity.schema_
-    if is_matchable_schema(schema_name):
-        return
-    options = ", ".join(matchable_schemata()[:6]) + ", …"
-    raise ConfigurationError(
-        f"Schema {schema_name!r} is not a matchable target for /match. "
-        f"Use a matchable schema like {options} "
-        f"(run `yente-cli ref schemas --matchable` for the full list)."
-    )
-
-
-def _prepare_match_query(
-    filters: MatchFilters | None,
-    filter_kwargs: dict[str, Any],
-    *,
-    threshold: float | None,
-    cutoff: float | None,
-    algorithm: str | None,
-    limit: int | None,
-) -> tuple[str, dict[str, Any]]:
-    """Resolve filters and scoring params into the /match dataset path and query params."""
-    f = merge_filters(MatchFilters, filters, filter_kwargs)
-    dataset, params = serialise_match_filters(f)
-    if threshold is not None:
-        params["threshold"] = threshold
-    if cutoff is not None:
-        params["cutoff"] = cutoff
-    if algorithm is not None:
-        params["algorithm"] = algorithm
-    if limit is not None:
-        params["limit"] = limit
-    return dataset, params
-
-
-def _match_body(
-    entity: EntityInput,
-    weights: dict[str, float] | None,
-    config: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Build the single-query POST body for /match."""
-    return {
-        "queries": {"q": entity.to_payload()},
-        "weights": weights or {},
-        "config": config or {},
-    }
 
 
 class Client:
@@ -129,11 +82,7 @@ class Client:
         # so DNS / connection-refused failures get a free retry.
         kwargs["transport"] = transport or httpx.HTTPTransport(retries=2)
         self._http = httpx.Client(**kwargs)
-        self._base_url = base_url
-        # Per-URL (etag, body) pairs for _request_revalidated. Raw JSON, not
-        # validated models — callers re-validate, so a served 304 can't leak
-        # mutable state between calls.
-        self._etag_cache: dict[str, tuple[str, Any]] = {}
+        self._etags = ETagCache()
         self._request_headers: dict[str, str] = {}
 
     def with_api_key(self, api_key: str) -> Self:
@@ -163,50 +112,26 @@ class Client:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """Issue one HTTP request; map errors and decode JSON.
-
-        Caller passes ``params=`` / ``json=`` / etc. as for ``httpx.Client.request``.
-        Returns parsed JSON on 2xx; raises an ``APIError`` subclass on non-2xx
-        and ``TransportError`` on connection-level failure.
-        """
+    def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Issue one HTTP request, mapping connection failures to ``TransportError``."""
         try:
-            response = self._http.request(method, path, headers=self._request_headers, **kwargs)
+            headers = {**self._request_headers, **kwargs.pop("headers", {})}
+            return self._http.request(method, url, headers=headers, **kwargs)
         except httpx.TransportError as exc:
             raise TransportError(str(exc)) from exc
 
-        if not response.is_success:
-            raise_for_response(response)
-
-        return response.json()
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """Issue one request and decode its JSON; non-2xx raises an ``APIError`` subclass."""
+        return read_json(self._send(method, path, **kwargs))
 
     def _request_revalidated(self, url: str) -> Any:
         """GET with ETag revalidation — serve the held body on ``304 Not Modified``.
 
-        Keeps one ``(etag, body)`` pair per URL on this client instance and sends
-        ``If-None-Match`` once it has one. A server that emits no ``ETag`` gets
-        exactly :meth:`_request` behavior, so this is safe to route any GET
-        endpoint through — it lights up when the server grows validator support.
+        Safe to route any GET endpoint through: a server that emits no ``ETag``
+        gets exactly :meth:`_request` behavior.
         """
-        headers = dict(self._request_headers)
-        cached = self._etag_cache.get(url)
-        if cached is not None:
-            headers["If-None-Match"] = cached[0]
-        try:
-            response = self._http.request("GET", url, headers=headers)
-        except httpx.TransportError as exc:
-            raise TransportError(str(exc)) from exc
-
-        if response.status_code == 304 and cached is not None:
-            return cached[1]
-        if not response.is_success:
-            raise_for_response(response)
-
-        body = response.json()
-        etag = response.headers.get("ETag")
-        if etag:
-            self._etag_cache[url] = (etag, body)
-        return body
+        response = self._send("GET", url, headers=self._etags.headers(url))
+        return self._etags.read(url, response)
 
     # ----- system / health endpoints -----
 
@@ -306,36 +231,21 @@ class Client:
             limit: Page size; server-capped (typically at 5000).
             offset: Pagination offset.
         """
-        params: dict[str, Any] = {"offset": offset}
-        if dataset is not None:
-            params["dataset"] = dataset
-        if entity_id is not None:
-            params["entity_id"] = entity_id
-        if canonical_id is not None:
-            params["canonical_id"] = canonical_id
-        if prop is not None:
-            params["prop"] = prop
-        if value is not None:
-            params["value"] = value
-        if schema is not None:
-            params["schema"] = schema
-        if sort:
-            params["sort"] = sort
-        if limit is not None:
-            params["limit"] = limit
+        params = drop_none(
+            offset=offset,
+            dataset=dataset,
+            entity_id=entity_id,
+            canonical_id=canonical_id,
+            prop=prop,
+            value=value,
+            schema=schema,
+            sort=sort or None,
+            limit=limit,
+        )
         try:
             raw = self._request("GET", "/statements", params=params)
         except NotFoundError as exc:
-            raise NotFoundError(
-                status_code=exc.status_code,
-                detail=(
-                    "The /statements endpoint is not available on this server. "
-                    "Statement-level access is provided only by the OpenSanctions "
-                    "API; yente does not ship the backing Postgres instance and "
-                    "returns 404 here."
-                ),
-                response=exc.response,
-            ) from exc
+            raise statements_unavailable(exc) from exc
         return StatementsResponse.model_validate(raw)
 
     # ----- entity fetch -----
@@ -349,8 +259,7 @@ class Client:
         links.
         """
         params = {"nested": "true" if nested else "false"}
-        path = f"/entities/{quote(entity_id, safe='')}"
-        return Entity.model_validate(self._request("GET", path, params=params))
+        return Entity.model_validate(self._request("GET", entity_path(entity_id), params=params))
 
     @overload
     def adjacent(
@@ -388,18 +297,12 @@ class Client:
         Without ``prop``: returns the full adjacency map keyed by property
         name. With ``prop``: returns paginated results for that one property.
         """
-        params: dict[str, Any] = {"offset": offset}
-        if limit is not None:
-            params["limit"] = limit
-        if sort:
-            params["sort"] = sort
-
-        eid = quote(entity_id, safe="")
+        params = drop_none(offset=offset, limit=limit, sort=sort or None)
         if prop is None:
-            raw = self._request("GET", f"/entities/{eid}/adjacent", params=params)
+            raw = self._request("GET", entity_path(entity_id, "adjacent"), params=params)
             return AdjacentResponse.model_validate(raw)
-        path = f"/entities/{eid}/adjacent/{quote(prop, safe='')}"
-        return AdjacentPropertyResponse.model_validate(self._request("GET", path, params=params))
+        raw = self._request("GET", entity_path(entity_id, "adjacent", prop), params=params)
+        return AdjacentPropertyResponse.model_validate(raw)
 
     # ----- search -----
 
@@ -424,25 +327,18 @@ class Client:
         translated to the v1 wire as ``/search/<first-dataset>`` with the
         rest passed as repeated ``include_dataset`` query params.
         """
-        f = merge_filters(SearchFilters, filters, filter_kwargs)
-        dataset, params = serialise_search_filters(f)
-
-        params["q"] = q
-        params["offset"] = offset
-        if limit is not None:
-            params["limit"] = limit
-        if sort:
-            params["sort"] = sort
-        if fuzzy:
-            params["fuzzy"] = "true"
-        if simple:
-            params["simple"] = "true"
-        if facets:
-            params["facets"] = facets
-
-        return SearchResponse.model_validate(
-            self._request("GET", f"/search/{quote(dataset, safe='')}", params=params)
+        path, params = search_request(
+            q,
+            filters,
+            filter_kwargs,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            fuzzy=fuzzy,
+            simple=simple,
+            facets=facets,
         )
+        return SearchResponse.model_validate(self._request("GET", path, params=params))
 
     # ----- match -----
 
@@ -483,8 +379,8 @@ class Client:
                 the query with a 4xx; the client refuses it before the
                 round-trip to give a clearer error.
         """
-        _check_matchable_schema(entity)
-        dataset, params = _prepare_match_query(
+        check_matchable_schema(entity)
+        path, params = match_request(
             filters,
             filter_kwargs,
             threshold=threshold,
@@ -492,10 +388,8 @@ class Client:
             algorithm=algorithm,
             limit=limit,
         )
-        body = _match_body(entity, weights, config)
-
-        raw = self._request("POST", f"/match/{quote(dataset, safe='')}", params=params, json=body)
-
+        body = match_body(entity, weights, config)
+        raw = self._request("POST", path, params=params, json=body)
         return MatchResponse.model_validate(unwrap_match_response(raw))
 
     def match_iter(
@@ -539,7 +433,7 @@ class Client:
         """
         if workers < 1:
             raise ValueError(f"workers must be >= 1, got {workers}")
-        dataset, params = _prepare_match_query(
+        path, params = match_request(
             filters,
             filter_kwargs,
             threshold=threshold,
@@ -547,12 +441,11 @@ class Client:
             algorithm=algorithm,
             limit=limit,
         )
-        path = f"/match/{quote(dataset, safe='')}"
 
         def run_one(entity: EntityInput) -> MatchResponse:
-            _check_matchable_schema(entity)
+            check_matchable_schema(entity)
             raw = self._request(
-                "POST", path, params=params, json=_match_body(entity, weights, config)
+                "POST", path, params=params, json=match_body(entity, weights, config)
             )
             return MatchResponse.model_validate(unwrap_match_response(raw))
 

@@ -405,7 +405,7 @@ def test_screen_schema_column_per_row(runner, tmp_path) -> None:
     assert result.exit_code == 5  # the Nonsense row errored
     rows = _read_csv(tmp_path / "in.out.csv")
     assert [r["match_id"] for r in rows] == ["NK-1", "NK-co", "", "NK-fb"]
-    assert "unknown schema 'Nonsense'" in rows[2]["match_error"]
+    assert "Unknown schema 'Nonsense'" in rows[2]["match_error"]
 
 
 def test_screen_schema_column_empty_cell_without_fallback(runner, tmp_path) -> None:
@@ -423,7 +423,7 @@ def test_screen_schema_column_non_matchable_row(runner, tmp_path) -> None:
     result = _invoke(runner, [str(src), "--schema-column", "type", "-i", "name=name"], _by_name({}))
     assert result.exit_code == 5
     rows = _read_csv(tmp_path / "in.out.csv")
-    assert "not matchable" in rows[0]["match_error"]
+    assert "not a matchable target" in rows[0]["match_error"]
 
 
 # ---------- mapping validation / usage errors ----------

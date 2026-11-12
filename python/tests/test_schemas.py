@@ -1,6 +1,7 @@
 import pytest
 
 from yente_client.schemas import (
+    all_property_specs,
     describe_schema,
     describe_type,
     has_schema,
@@ -8,9 +9,12 @@ from yente_client.schemas import (
     is_deprecated,
     iter_properties,
     model,
+    property_specs,
     schema_index,
     schema_properties,
     schema_relations,
+    schema_spec,
+    type_spec,
     type_values,
 )
 
@@ -103,6 +107,35 @@ def test_is_deprecated_unknown_schema_raises() -> None:
 def test_is_deprecated_unknown_property_raises() -> None:
     with pytest.raises(KeyError):
         is_deprecated("Person", "noSuchProperty")
+
+
+# ---------- typed views ----------
+
+
+def test_schema_spec_reduces_edge_to_a_flag() -> None:
+    assert schema_spec("Ownership").edge is True
+    assert schema_spec("Person").edge is False
+    assert "LegalEntity" in schema_spec("Person").schemata
+
+
+def test_property_specs_include_inherited_definitions() -> None:
+    specs = property_specs("Person")
+    assert specs["birthDate"].type == "date"
+    assert specs["name"].type == "name"  # inherited from Thing
+    assert specs["ownershipOwner"].range == "Ownership"
+    with pytest.raises(KeyError):
+        property_specs("NotARealSchema")
+
+
+def test_all_property_specs_spans_schemata() -> None:
+    specs = all_property_specs()
+    assert specs["imoNumber"].type == "identifier"  # Vessel-only
+    assert specs["birthDate"].type == "date"
+
+
+def test_type_spec_values() -> None:
+    assert "sanction" in type_spec("topic").values
+    assert type_spec("country").matchable is True
 
 
 # ---------- canonical model projection (shared by MCP + CLI) ----------

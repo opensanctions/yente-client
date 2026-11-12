@@ -10,22 +10,21 @@ import copy
 from collections.abc import AsyncIterator, Iterable
 from types import TracebackType
 from typing import Any, Literal, Self, overload
-from urllib.parse import quote
 
 import httpx
 
-from yente_client._http import prepare_http_kwargs, raise_for_response
+from yente_client._http import ETagCache, prepare_http_kwargs, read_json
 from yente_client._translation import (
-    merge_filters,
-    serialise_search_filters,
+    check_matchable_schema,
+    drop_none,
+    entity_path,
+    match_body,
+    match_request,
+    search_request,
+    statements_unavailable,
     unwrap_match_response,
 )
-from yente_client.client import (
-    PROGRAMS_URL,
-    _check_matchable_schema,
-    _match_body,
-    _prepare_match_query,
-)
+from yente_client.client import PROGRAMS_URL
 from yente_client.entities import EntityInput
 from yente_client.env import DEFAULT_BASE_URL
 from yente_client.exceptions import NotFoundError, TransportError
@@ -81,9 +80,7 @@ class AsyncClient:
         # retries (DNS, connection-refused) for free.
         kwargs["transport"] = transport or httpx.AsyncHTTPTransport(retries=2)
         self._http = httpx.AsyncClient(**kwargs)
-        self._base_url = base_url
-        # Per-URL (etag, body) pairs for _request_revalidated; see the sync client.
-        self._etag_cache: dict[str, tuple[str, Any]] = {}
+        self._etags = ETagCache()
         self._request_headers: dict[str, str] = {}
 
     def with_api_key(self, api_key: str) -> Self:
@@ -118,46 +115,22 @@ class AsyncClient:
     ) -> None:
         await self.aclose()
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """Issue one HTTP request; map errors and decode JSON.
-
-        Async mirror of :meth:`yente_client.client.Client._request`. Same
-        error semantics: :class:`APIError` subclass on non-2xx,
-        :class:`TransportError` on connection-level failure.
-        """
+    async def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Async mirror of :meth:`yente_client.client.Client._send`."""
         try:
-            response = await self._http.request(
-                method, path, headers=self._request_headers, **kwargs
-            )
+            headers = {**self._request_headers, **kwargs.pop("headers", {})}
+            return await self._http.request(method, url, headers=headers, **kwargs)
         except httpx.TransportError as exc:
             raise TransportError(str(exc)) from exc
 
-        if not response.is_success:
-            raise_for_response(response)
-
-        return response.json()
+    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """Async mirror of :meth:`yente_client.client.Client._request`."""
+        return read_json(await self._send(method, path, **kwargs))
 
     async def _request_revalidated(self, url: str) -> Any:
         """Async mirror of :meth:`yente_client.client.Client._request_revalidated`."""
-        headers = dict(self._request_headers)
-        cached = self._etag_cache.get(url)
-        if cached is not None:
-            headers["If-None-Match"] = cached[0]
-        try:
-            response = await self._http.request("GET", url, headers=headers)
-        except httpx.TransportError as exc:
-            raise TransportError(str(exc)) from exc
-
-        if response.status_code == 304 and cached is not None:
-            return cached[1]
-        if not response.is_success:
-            raise_for_response(response)
-
-        body = response.json()
-        etag = response.headers.get("ETag")
-        if etag:
-            self._etag_cache[url] = (etag, body)
-        return body
+        response = await self._send("GET", url, headers=self._etags.headers(url))
+        return self._etags.read(url, response)
 
     # ----- system / health endpoints -----
 
@@ -199,36 +172,21 @@ class AsyncClient:
         offset: int = 0,
     ) -> StatementsResponse:
         """Async equivalent of :meth:`yente_client.client.Client.statements`."""
-        params: dict[str, Any] = {"offset": offset}
-        if dataset is not None:
-            params["dataset"] = dataset
-        if entity_id is not None:
-            params["entity_id"] = entity_id
-        if canonical_id is not None:
-            params["canonical_id"] = canonical_id
-        if prop is not None:
-            params["prop"] = prop
-        if value is not None:
-            params["value"] = value
-        if schema is not None:
-            params["schema"] = schema
-        if sort:
-            params["sort"] = sort
-        if limit is not None:
-            params["limit"] = limit
+        params = drop_none(
+            offset=offset,
+            dataset=dataset,
+            entity_id=entity_id,
+            canonical_id=canonical_id,
+            prop=prop,
+            value=value,
+            schema=schema,
+            sort=sort or None,
+            limit=limit,
+        )
         try:
             raw = await self._request("GET", "/statements", params=params)
         except NotFoundError as exc:
-            raise NotFoundError(
-                status_code=exc.status_code,
-                detail=(
-                    "The /statements endpoint is not available on this server. "
-                    "Statement-level access is provided only by the OpenSanctions "
-                    "API; yente does not ship the backing Postgres instance and "
-                    "returns 404 here."
-                ),
-                response=exc.response,
-            ) from exc
+            raise statements_unavailable(exc) from exc
         return StatementsResponse.model_validate(raw)
 
     # ----- entity fetch -----
@@ -236,8 +194,8 @@ class AsyncClient:
     async def fetch(self, entity_id: str, *, nested: bool = True) -> Entity:
         """Async equivalent of :meth:`yente_client.client.Client.fetch`."""
         params = {"nested": "true" if nested else "false"}
-        path = f"/entities/{quote(entity_id, safe='')}"
-        return Entity.model_validate(await self._request("GET", path, params=params))
+        raw = await self._request("GET", entity_path(entity_id), params=params)
+        return Entity.model_validate(raw)
 
     @overload
     async def adjacent(
@@ -271,20 +229,12 @@ class AsyncClient:
         sort: list[str] | None = None,
     ) -> AdjacentResponse | AdjacentPropertyResponse:
         """Async equivalent of :meth:`yente_client.client.Client.adjacent`."""
-        params: dict[str, Any] = {"offset": offset}
-        if limit is not None:
-            params["limit"] = limit
-        if sort:
-            params["sort"] = sort
-
-        eid = quote(entity_id, safe="")
+        params = drop_none(offset=offset, limit=limit, sort=sort or None)
         if prop is None:
-            raw = await self._request("GET", f"/entities/{eid}/adjacent", params=params)
+            raw = await self._request("GET", entity_path(entity_id, "adjacent"), params=params)
             return AdjacentResponse.model_validate(raw)
-        path = f"/entities/{eid}/adjacent/{quote(prop, safe='')}"
-        return AdjacentPropertyResponse.model_validate(
-            await self._request("GET", path, params=params)
-        )
+        raw = await self._request("GET", entity_path(entity_id, "adjacent", prop), params=params)
+        return AdjacentPropertyResponse.model_validate(raw)
 
     # ----- search -----
 
@@ -302,25 +252,18 @@ class AsyncClient:
         **filter_kwargs: Any,
     ) -> SearchResponse:
         """Async equivalent of :meth:`yente_client.client.Client.search`."""
-        f = merge_filters(SearchFilters, filters, filter_kwargs)
-        dataset, params = serialise_search_filters(f)
-
-        params["q"] = q
-        params["offset"] = offset
-        if limit is not None:
-            params["limit"] = limit
-        if sort:
-            params["sort"] = sort
-        if fuzzy:
-            params["fuzzy"] = "true"
-        if simple:
-            params["simple"] = "true"
-        if facets:
-            params["facets"] = facets
-
-        return SearchResponse.model_validate(
-            await self._request("GET", f"/search/{quote(dataset, safe='')}", params=params)
+        path, params = search_request(
+            q,
+            filters,
+            filter_kwargs,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            fuzzy=fuzzy,
+            simple=simple,
+            facets=facets,
         )
+        return SearchResponse.model_validate(await self._request("GET", path, params=params))
 
     # ----- match -----
 
@@ -338,8 +281,8 @@ class AsyncClient:
         **filter_kwargs: Any,
     ) -> MatchResponse:
         """Async equivalent of :meth:`yente_client.client.Client.match`."""
-        _check_matchable_schema(entity)
-        dataset, params = _prepare_match_query(
+        check_matchable_schema(entity)
+        path, params = match_request(
             filters,
             filter_kwargs,
             threshold=threshold,
@@ -347,11 +290,8 @@ class AsyncClient:
             algorithm=algorithm,
             limit=limit,
         )
-        body = _match_body(entity, weights, config)
-
-        raw = await self._request(
-            "POST", f"/match/{quote(dataset, safe='')}", params=params, json=body
-        )
+        body = match_body(entity, weights, config)
+        raw = await self._request("POST", path, params=params, json=body)
         return MatchResponse.model_validate(unwrap_match_response(raw))
 
     async def match_iter(
@@ -376,7 +316,7 @@ class AsyncClient:
         """
         if workers < 1:
             raise ValueError(f"workers must be >= 1, got {workers}")
-        dataset, params = _prepare_match_query(
+        path, params = match_request(
             filters,
             filter_kwargs,
             threshold=threshold,
@@ -384,12 +324,11 @@ class AsyncClient:
             algorithm=algorithm,
             limit=limit,
         )
-        path = f"/match/{quote(dataset, safe='')}"
 
         async def run_one(entity: EntityInput) -> MatchResponse:
-            _check_matchable_schema(entity)
+            check_matchable_schema(entity)
             raw = await self._request(
-                "POST", path, params=params, json=_match_body(entity, weights, config)
+                "POST", path, params=params, json=match_body(entity, weights, config)
             )
             return MatchResponse.model_validate(unwrap_match_response(raw))
 

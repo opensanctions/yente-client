@@ -331,3 +331,20 @@ def test_dataset_metadata_defaults_when_absent() -> None:
 def test_total_spec_relation_literal() -> None:
     ts = TotalSpec.model_validate({"value": 100, "relation": "gte"})
     assert ts.relation == "gte"
+
+
+def test_entity_get_skips_nested_entities() -> None:
+    entity = Entity.model_validate(
+        {
+            "id": "a",
+            "caption": "A",
+            "schema": "Person",
+            "properties": {
+                "name": ["A"],
+                "sanctions": [{"id": "s", "caption": "S", "schema": "Sanction"}],
+            },
+        }
+    )
+    assert entity.get("name") == ["A"]
+    assert entity.get("sanctions") == []
+    assert entity.get("birthDate") == []

@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from yente_client.env import HOSTED_HOSTS
 from yente_client.exceptions import (
     APIError,
     AuthenticationError,
@@ -44,12 +45,15 @@ def validate_app_name(name: str) -> str:
     return name
 
 
-def _client_version() -> str:
-    """Resolve ``yente-client``'s installed version. Falls back for editable / unbuilt cases."""
+def _installed_version() -> str:
     try:
         return version("yente-client")
     except PackageNotFoundError:
         return "0.0.0+unknown"
+
+
+VERSION = _installed_version()
+"""Installed ``yente-client`` version; ``0.0.0+unknown`` in an unbuilt checkout."""
 
 
 def build_user_agent(app_name: str | None = None, override: str | None = None) -> str:
@@ -69,7 +73,12 @@ def build_user_agent(app_name: str | None = None, override: str | None = None) -
         parts.append(app_name)
     parts.append(f"python/{py}")
     parts.append(f"httpx/{httpx.__version__}")
-    return f"yente-client/{_client_version()} ({'; '.join(parts)})"
+    return f"yente-client/{VERSION} ({'; '.join(parts)})"
+
+
+def is_opensanctions_url(base_url: str) -> bool:
+    """Return True when ``base_url`` points at the OpenSanctions API."""
+    return any(host in base_url for host in HOSTED_HOSTS)
 
 
 def prepare_http_kwargs(
@@ -110,6 +119,41 @@ def prepare_http_kwargs(
     if proxy is not None:
         kwargs["proxy"] = proxy
     return kwargs
+
+
+def read_json(response: httpx.Response) -> Any:
+    """Decode a response's JSON, raising the matching ``APIError`` on non-2xx."""
+    if not response.is_success:
+        raise_for_response(response)
+    return response.json()
+
+
+class ETagCache:
+    """Hold one ``(etag, body)`` pair per URL for ``If-None-Match`` revalidation.
+
+    Bodies are raw JSON, not validated models: callers re-validate, so a served
+    ``304`` can't leak mutable state between calls. A server that emits no
+    ``ETag`` leaves the cache empty, and every call stays a plain GET.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[str, Any]] = {}
+
+    def headers(self, url: str) -> dict[str, str]:
+        """Return the revalidation header for ``url``, if a body is held."""
+        entry = self._entries.get(url)
+        return {"If-None-Match": entry[0]} if entry is not None else {}
+
+    def read(self, url: str, response: httpx.Response) -> Any:
+        """Serve the held body on ``304 Not Modified``; otherwise decode and hold."""
+        entry = self._entries.get(url)
+        if response.status_code == 304 and entry is not None:
+            return entry[1]
+        body = read_json(response)
+        etag = response.headers.get("ETag")
+        if etag:
+            self._entries[url] = (etag, body)
+        return body
 
 
 def raise_for_response(response: httpx.Response) -> None:
@@ -155,6 +199,13 @@ def _extract_detail(response: httpx.Response) -> str:
         if isinstance(detail, list):
             # Pydantic validation error format: list of {msg, loc, type, ...}.
             return "; ".join(_format_detail_item(item) for item in detail)
+        # yente puts a generic title in `detail` and the specifics in `errors`:
+        # a list in pydantic's format, or a dict for FtM data errors.
+        errors = body.get("errors")
+        if isinstance(errors, list) and errors:
+            return f"{detail}: " + "; ".join(_format_detail_item(item) for item in errors)
+        if isinstance(errors, dict) and errors:
+            return f"{detail}: {errors}"
         return str(detail)
     return str(body)
 

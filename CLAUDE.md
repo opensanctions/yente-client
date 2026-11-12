@@ -68,7 +68,7 @@ them.
 - **Schema-level `matchable`** is enforced by the server and preempted
   client-side: `Client.match()` raises `ConfigurationError` before the
   round-trip when the entity's schema isn't matchable. The CLI mirrors
-  the check in `_build_entity_input`.
+  the check in `matchable_entity_class` (`cli/_common.py`).
 - **Property-level `matchable`** governs one specific routing decision
   inside the matcher (whether the property's value is used as a
   candidate-filter clause in the search query). It is **NOT** a

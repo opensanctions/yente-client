@@ -1,12 +1,12 @@
 """Per-request API key extraction.
 
-v1 auth is bearer-token pass-through: the MCP holds no secret. Each request
-carries the caller's OpenSanctions API key as ``Authorization: Bearer <key>``;
-the server forwards it downstream so yente's existing gateway does the actual
-validation, quota, and billing, and the caller is screening as themselves. When
-a request carries no bearer token, the server falls back to its own
-``OPENSANCTIONS_API_KEY`` env var — convenient for running locally against a
-real API.
+Auth is bearer-token pass-through. Each request carries the caller's
+OpenSanctions API key, or with OAuth2 its access token, as
+``Authorization: Bearer <token>``; the server forwards it downstream so yente's
+gateway does the validation, quota, and billing, and the caller is screening
+as themselves. When a request carries no bearer token, the server falls back to
+its own ``OPENSANCTIONS_API_KEY`` env var — convenient for running locally
+against a real API.
 
 This module is the credential-free half (parse the header) so it stays
 FastMCP-independent and testable; the header extraction lives in

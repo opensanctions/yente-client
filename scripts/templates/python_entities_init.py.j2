@@ -11,9 +11,26 @@ from yente_client.entities._generated import (
 {% endfor %}
 )
 
+_CLASSES: dict[str, type[EntityInput]] = {
+{% for name in schema_names %}
+    {{ name | py_str }}: {{ name }},
+{% endfor %}
+}
+
+
+def entity_class(name: str) -> type[EntityInput]:
+    """Return the input class for an FtM schema name, e.g. ``"Person"`` → ``Person``.
+
+    Raises:
+        KeyError: if ``name`` is not a schema in the bundled model.
+    """
+    return _CLASSES[name]
+
+
 __all__ = [
     "EntityInput",
     "_EntityBase",
+    "entity_class",
 {% for name in schema_names %}
     {{ name | py_str }},
 {% endfor %}

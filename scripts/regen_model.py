@@ -131,8 +131,7 @@ def build_context(model_json: dict[str, Any]) -> dict[str, Any]:
 
     The payload published as a GitHub release artifact has the shape
     ``{schemata, types, version}`` — no wrapper, the model is at the top
-    level. (The older ``data.opensanctions.org/meta/model.json`` payload
-    wrapped it under ``["model"]``; that source is no longer used.)
+    level.
     """
     schemata = model_json["schemata"]
     types = model_json["types"]

@@ -10,6 +10,16 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **SDK helpers:** `Algorithm.features` maps each scoring feature to a
+  `FeatureDoc` (description, coefficient, source link);
+  `yente_client.__version__`; `Entity.get(prop)` for a property's plain
+  values; `entities.entity_class(name)`; and typed views of the bundled model
+  (`schemas.schema_spec()`, `property_specs()`, `all_property_specs()`,
+  `type_spec()`).
+- **Bundled model updated to followthemoney v4.11.3.** New entity classes
+  `Control` and `Territory`; `Risk` gains `authority`, `program`,
+  `programId` and `programUrl`; `LegalEntity` gains `cikCode`; and the
+  `Topic` enum gains `corp.clone` and `geo.risk`.
 - **`Client.with_api_key()` / `AsyncClient.with_api_key()`** — get a client
   that sends a different API key over the same connections and ETag cache.
   Use it to serve many API keys, such as one per caller, from one connection
@@ -23,9 +33,29 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **MCP server output redesigned for screening and research.** Response
+  shapes change throughout:
+  - `fetch_entity_by_id` returns a profile: the record plus previews of its
+    sanctions, risk listings, positions and other relationships
+    (`full=True` for the raw record). Prose moves to the new
+    `fetch_entity_descriptions`, credited per source, official sources first.
+  - `match_entity` shows the compared values behind each scoring feature,
+    gains `cutoff`, and returns `near_misses` when nothing clears it.
+  - Every entity-bearing response decodes its codes in one `legend`, dated by
+    `as_of` (the collection set by the new `YENTE_MCP_DATASET`).
+  - Candidates, search results and relationship far ends are abridged refs.
+    Every list carries `next`, the exact call for its next page; pages
+    default to 10, at most 25.
+  - `describe(kind, name)` replaces the `describe_*` tools; dataset and
+    program lookups need a name and suggest close ones.
+  - Results are sent as text only, the `ftm://` resources are removed, and
+    the server instructions and tool descriptions are rewritten.
+- **API errors include yente's field-level validation reasons** in
+  `APIError.detail`. CLI "did you mean" hints share one format.
+- **`schemas.property_matchable()` takes a `PropertySpec`** instead of a raw
+  model dict.
 - **The `yente-mcp` HTTP transport is stateless**, so more than one instance
   can serve it behind a load balancer.
-
 - The MCP server sends all tool calls through one API client and one
   connection pool, whatever key the caller sends. It no longer keeps a client
   per API key. `yente_client.mcp.auth.client_for()` and `resolve_api_key()`

@@ -29,22 +29,29 @@ try:
     from fastmcp.server.auth import RemoteAuthProvider
     from fastmcp.server.auth.providers.jwt import JWTVerifier
     from fastmcp.server.dependencies import get_http_headers
+    from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools import ToolResult
 except ImportError:
     _bail("fastmcp")
 
 # FastMCP depends on the MCP SDK, so this only fails on a broken install.
 try:
-    from mcp.types import Icon, ToolAnnotations
+    from mcp.types import CallToolRequestParams, Icon, ToolAnnotations
 except ImportError:
     _bail("mcp")
 
 
 __all__ = [
+    "CallNext",
+    "CallToolRequestParams",
     "FastMCP",
     "Icon",
     "JWTVerifier",
+    "Middleware",
+    "MiddlewareContext",
     "RemoteAuthProvider",
     "ToolAnnotations",
     "ToolError",
+    "ToolResult",
     "get_http_headers",
 ]

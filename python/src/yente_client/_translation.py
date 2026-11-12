@@ -6,10 +6,14 @@ rippling through the endpoint methods.
 
 from datetime import datetime
 from typing import Any, TypeVar
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
+from yente_client.entities import EntityInput
+from yente_client.exceptions import ConfigurationError, NotFoundError
 from yente_client.filters import MatchFilters, SearchFilters, _CommonFilters
+from yente_client.schemas import is_matchable_schema, matchable_schemata
 
 FT = TypeVar("FT", bound=BaseModel)
 
@@ -34,6 +38,101 @@ def merge_filters(cls: type[FT], filters: FT | None, kwargs: dict[str, Any]) -> 
     base = filters.model_dump()
     base.update(overrides.model_dump(exclude_unset=True))
     return cls(**base)
+
+
+def drop_none(**params: Any) -> dict[str, Any]:
+    """Keep only the query params the caller set, so server defaults apply."""
+    return {key: value for key, value in params.items() if value is not None}
+
+
+def entity_path(entity_id: str, *parts: str) -> str:
+    """Build ``/entities/<id>[/<part>…]`` with every segment percent-encoded."""
+    return "/entities/" + "/".join(quote(part, safe="") for part in (entity_id, *parts))
+
+
+def search_request(
+    q: str,
+    filters: SearchFilters | None,
+    filter_kwargs: dict[str, Any],
+    *,
+    limit: int | None,
+    offset: int,
+    sort: list[str] | None,
+    fuzzy: bool,
+    simple: bool,
+    facets: list[str] | None,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve a search into its ``/search`` path and query params."""
+    f = merge_filters(SearchFilters, filters, filter_kwargs)
+    dataset, params = serialise_search_filters(f)
+    params.update(
+        drop_none(
+            q=q,
+            offset=offset,
+            limit=limit,
+            sort=sort or None,
+            fuzzy="true" if fuzzy else None,
+            simple="true" if simple else None,
+            facets=facets or None,
+        )
+    )
+    return f"/search/{quote(dataset, safe='')}", params
+
+
+def match_request(
+    filters: MatchFilters | None,
+    filter_kwargs: dict[str, Any],
+    *,
+    threshold: float | None,
+    cutoff: float | None,
+    algorithm: str | None,
+    limit: int | None,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve filters and scoring params into the ``/match`` path and query params."""
+    f = merge_filters(MatchFilters, filters, filter_kwargs)
+    dataset, params = serialise_match_filters(f)
+    params.update(drop_none(threshold=threshold, cutoff=cutoff, algorithm=algorithm, limit=limit))
+    return f"/match/{quote(dataset, safe='')}", params
+
+
+def match_body(
+    entity: EntityInput,
+    weights: dict[str, float] | None,
+    config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the single-query POST body for ``/match``."""
+    return {
+        "queries": {"q": entity.to_payload()},
+        "weights": weights or {},
+        "config": config or {},
+    }
+
+
+def check_matchable_schema(entity: EntityInput) -> None:
+    """Raise :class:`ConfigurationError` if ``entity``'s schema can't be matched."""
+    schema_name = entity.schema_
+    if is_matchable_schema(schema_name):
+        return
+    options = ", ".join(matchable_schemata()[:6]) + ", …"
+    raise ConfigurationError(
+        f"Schema {schema_name!r} is not a matchable target for /match. "
+        f"Use a matchable schema like {options} "
+        f"(run `yente-cli ref schemas --matchable` for the full list)."
+    )
+
+
+def statements_unavailable(exc: NotFoundError) -> NotFoundError:
+    """Restate a ``/statements`` 404: the endpoint, not a record, is missing."""
+    return NotFoundError(
+        status_code=exc.status_code,
+        detail=(
+            "The /statements endpoint is not available on this server. "
+            "Statement-level access is provided only by the OpenSanctions "
+            "API; yente does not ship the backing Postgres instance and "
+            "returns 404 here."
+        ),
+        response=exc.response,
+    )
 
 
 def datasets_for_wire(datasets: list[str] | None) -> tuple[str, list[str]]:

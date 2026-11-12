@@ -4,78 +4,181 @@ Lets an assistant screen people, companies, and other entities against
 sanctions, PEP, and watchlist data and walk their relationships — the same
 matching surface as the yente SDK, framed for an analyst rather than a caller.
 
-Five thin adapters over :class:`yente_client.AsyncClient` (``match_entity``,
-``search_entities``, ``fetch_entity_by_id``, ``fetch_entity_relations``,
-``fetch_entity_statements``) plus a set of ``describe_*`` lookup tools:
-``describe_schema``, ``describe_topics`` and ``describe_countries`` over the
-bundled FtM model, ``describe_dataset`` over the live catalog, and
-``describe_program`` over the public program-catalog artifact. Every code in
-an entity-bearing result resolves inline — topic/country labels from the
-bundled model, dataset/program titles as attached legends — so an agent never
-has to gloss a raw identifier. The ``ftm://schema`` resources mirror
-``describe_schema`` for resource-capable clients; anything the model must
-dereference mid-conversation is a tool, not a resource, since clients don't
-reliably read resources. Matching algorithms are deliberately not exposed:
+Adapters over :class:`yente_client.AsyncClient` (``match_entity``,
+``search_entities``, ``fetch_entity_by_id`` — an entity profile assembled from
+the record and its relations — ``fetch_entity_descriptions``,
+``fetch_entity_relations``, ``fetch_entity_statements``) plus ``describe``, a
+lookup of schemata, topics and countries from the bundled FtM model, or of one
+dataset or program record by name — the catalogs are too large to list whole.
+Every entity-bearing result resolves its own codes — topic labels inline,
+everything else through one ``legend`` per response (see
+:mod:`~yente_client.mcp.legend`) — so an agent never has to gloss a raw
+identifier. The server instructions
+(:data:`yente_client.env.DEFAULT_MCP_INSTRUCTIONS`) carry the data model and
+the rules shared by every tool; tool docstrings cover only their own tool. The
+server exposes no resources: anything the model must read mid-conversation is a
+tool, since clients don't reliably read resources. Gender values need no
+lookup; they explain themselves. Matching algorithms are deliberately not exposed:
 algorithm choice is a tuning detail below this server's altitude — the server
-default applies; use the SDK or CLI to experiment. Each request carries the
-caller's API key, or with OAuth2 on its access token, as a bearer token,
-forwarded downstream (see :mod:`yente_client.mcp.auth`).
+default applies, and only its feature descriptions reach the legend; use the
+SDK or CLI to experiment. Each request carries the caller's API key, or with
+OAuth2 on its access token, as a bearer token, forwarded downstream (see
+:mod:`yente_client.mcp.auth`).
 
-Keep this module thin: the real logic lives in :mod:`~yente_client.mcp.introspect`
-and :mod:`~yente_client.mcp.shaping`. Anything beyond plumbing belongs there so
-it stays testable without FastMCP.
+Keep this module thin: the real logic lives in :mod:`yente_client.schemas`,
+:mod:`~yente_client.mcp.shaping` and :mod:`~yente_client.mcp.legend`. Anything
+beyond plumbing belongs there so it stays testable without FastMCP.
 """
 
+import asyncio
+import contextlib
+import functools
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable, Iterator
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import AnyHttpUrl, ValidationError
 
-from yente_client import entities, env
-from yente_client._http import _client_version
+from yente_client import __version__, env, schemas
+from yente_client._http import is_opensanctions_url
 from yente_client.async_client import AsyncClient
-from yente_client.entities import EntityInput
+from yente_client.entities import EntityInput, entity_class
 from yente_client.exceptions import YenteError
-from yente_client.mcp import introspect, shaping
+from yente_client.mcp import legend, shaping
 from yente_client.mcp._deps import (
+    CallNext,
+    CallToolRequestParams,
     FastMCP,
     Icon,
     JWTVerifier,
+    Middleware,
+    MiddlewareContext,
     RemoteAuthProvider,
     ToolAnnotations,
     ToolError,
+    ToolResult,
     get_http_headers,
 )
 from yente_client.mcp.auth import parse_bearer
 from yente_client.mcp.errors import describe_error
-from yente_client.models import Program
+from yente_client.models import (
+    AdjacentPropertyResponse,
+    AlgorithmsResponse,
+    DatasetsResponse,
+    Entity,
+    ProgramsResponse,
+    Statement,
+    StatementsResponse,
+)
+
+T = TypeVar("T")
 
 # OpenSanctions brand mark, served as square PNGs from the public asset CDN.
 _ICON_BASE = "https://assets.opensanctions.org/images/nura"
 
 # Every tool here only reads (screens, searches, fetches, describes) — nothing
-# mutates server state — so they all share this read-only annotation.
-_READ_ONLY = ToolAnnotations(read_only_hint=True)
+# mutates server state — so they all share this read-only annotation. They query
+# one closed database, not the open web, hence open_world_hint=False.
+_READ_ONLY = ToolAnnotations(
+    read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+)
 
-# Every code in an entity-bearing result resolves inline: topic and country
-# labels come from the bundled model (see shaping), dataset and program titles
-# from live lookups cached below. An instruction to "resolve codes before
-# reporting" was routinely ignored; a label sitting next to the code is not —
-# so there is no note nudging the agent, just the labels.
+# Page sizes a caller sees. Every list a tool pages through (search results,
+# one relation type, statements) defaults to _PAGE_SIZE and is capped at
+# _MAX_PAGE_SIZE: a page of 100 ownership edges (~105k characters) overflows MCP
+# clients' tool-output caps, while paging is free. A profile previews a few
+# records per section and relationship type so hub entities stay readable (and
+# fit those caps), the overview of every type a few more. Tool docstrings state
+# the default and the cap; a test keeps them in step with these values.
+_PAGE_SIZE = 10
+_MAX_PAGE_SIZE = 25
+_PROFILE_EDGES = 3
+_OVERVIEW_EDGES = 5
+# Candidates returned below cutoff when a screen comes back empty.
+_NEAR_MISS_LIMIT = 3
+
+# Read sizes no caller sees. The descriptions tool reads designation records in
+# one go, and statements per prose property likewise (Gazprom, a heavy case, has
+# ~65 notes), then pages the texts by a character budget.
+_SECTION_READ = 50
+_STATEMENT_READ = 1000
+_TEXT_PAGE_CHARS = 15_000
+
+# Every code in an entity-bearing result resolves in the response itself:
+# schema, property and value labels come from the bundled model (see shaping),
+# dataset, program and scoring-feature records from live lookups cached below.
+# Labels ship with the data rather than as an instruction to resolve codes:
+# agents use a label next to its code and skip a separate lookup step.
 #
-# 15 minutes bounds how long a newly added dataset or sanctions program stays
-# unresolvable; both catalogs change on slower cadences than that. Refreshes
+# 5 minutes bounds how long a newly added dataset or sanctions program stays
+# unresolvable, and how stale a response's reported `as_of` can be; the catalogs
+# change on slower cadences than that. Refreshes
 # are cheap: programs.json revalidates via ETag (a 304 round-trip), and the
 # catalog is a small response (see opensanctions/yente#1202 for giving it an
 # ETag too).
-_GLOSSARY_TTL_SECONDS = 900.0
-_dataset_titles_cache: tuple[float, dict[str, str]] | None = None
-_program_catalog_cache: tuple[float, list[Program]] | None = None
+_GLOSSARY_TTL_SECONDS = 300.0
+
+
+class _TTLCache(Generic[T]):
+    """Hold one value fetched from yente, refetched once older than ``ttl`` seconds.
+
+    A failed refetch serves the stale value when one is held.
+    """
+
+    def __init__(self, ttl: float) -> None:
+        self.ttl = ttl
+        self.clear()
+
+    def clear(self) -> None:
+        self._value: T | None = None
+        self._fetched_at = 0.0
+
+    async def get(self, fetch: Callable[[], Awaitable[T]]) -> T:
+        """Return the held value, refetching it when stale.
+
+        Raises ``YenteError`` only when the fetch fails and nothing is held.
+        """
+        now = time.monotonic()
+        if self._value is not None and now - self._fetched_at < self.ttl:
+            return self._value
+        try:
+            self._value = await fetch()
+        except YenteError:
+            if self._value is None:
+                raise
+            return self._value
+        self._fetched_at = now
+        return self._value
+
+
+# Process-wide, not per client: the catalogs are the same for every caller.
+_catalog: _TTLCache[DatasetsResponse] = _TTLCache(_GLOSSARY_TTL_SECONDS)
+_programs: _TTLCache[ProgramsResponse] = _TTLCache(_GLOSSARY_TTL_SECONDS)
+_algorithms: _TTLCache[AlgorithmsResponse] = _TTLCache(_GLOSSARY_TTL_SECONDS)
+
+
+def _reset_caches() -> None:
+    for cache in (_catalog, _programs, _algorithms):
+        cache.clear()
+
 
 BASE_URL = env.base_url()
+DATASET = env.mcp_dataset()
 # Fallback API key for the whole server, used when a request carries no bearer
 # token — lets you run yente-mcp locally against a real API for testing.
 API_KEY = env.api_key()
+# Website links only resolve for data the website knows: the hosted API's.
+HOSTED = is_opensanctions_url(BASE_URL)
+_LINKS = (
+    {
+        "entity": env.ENTITY_URL_TEMPLATE,
+        "dataset": f"{env.WEBSITE_URL}/datasets/{{name}}/",
+        "program": f"{env.WEBSITE_URL}/programs/{{key}}/",
+    }
+    if HOSTED
+    else None
+)
+
 # One client, and so one connection pool, for every tool call. It carries no
 # key: _resolve_client() picks one per request.
 _base_client = AsyncClient(base_url=BASE_URL, app_name="yente-mcp")
@@ -114,7 +217,7 @@ mcp: FastMCP = FastMCP(
     # name and instructions default to "yente" / the stock copy, but a self-hosted
     # deployment can rebrand both via $YENTE_MCP_NAME / $YENTE_MCP_INSTRUCTIONS.
     name=env.mcp_name(),
-    version=_client_version(),
+    version=__version__,
     website_url="https://www.opensanctions.org",
     icons=[
         # Full-colour brand mark first (renders on any background), favicons as
@@ -130,6 +233,27 @@ mcp: FastMCP = FastMCP(
     # also means that _resolve_client() never falls back to the server's key.
     auth=_auth(),
 )
+
+
+class _TextOnly(Middleware):
+    """Send tool results as their JSON text block alone.
+
+    FastMCP mirrors any dict result into ``structuredContent``, so clients see
+    each result twice. Tools also pass ``output_schema=None``: results are
+    dynamic JSON (FtM property bags, per-response legends) that a declared
+    schema couldn't describe, and that clients would validate against it.
+    """
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[CallToolRequestParams],
+        call_next: CallNext[CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        result = await call_next(context)
+        return ToolResult(content=result.content, meta=result.meta, is_error=result.is_error)
+
+
+mcp.add_middleware(_TextOnly())
 
 
 def _resolve_client() -> AsyncClient:
@@ -159,218 +283,350 @@ def _resolve_client() -> AsyncClient:
     return _base_client.with_api_key(api_key)
 
 
-async def _dataset_titles(client: AsyncClient) -> dict[str, str]:
-    """Dataset name → title from the live catalog; cached, failure-soft.
-
-    On a fetch error returns the stale cache if there is one, else an empty
-    map — a missing legend must never fail a screening call.
-    """
-    global _dataset_titles_cache
-    now = time.monotonic()
-    if _dataset_titles_cache is not None:
-        fetched_at, titles = _dataset_titles_cache
-        if now - fetched_at < _GLOSSARY_TTL_SECONDS:
-            return titles
+async def _soft(cache: _TTLCache[T], fetch: Callable[[], Awaitable[T]]) -> T | None:
+    """Read a cached lookup that only enriches a response: a failure yields ``None``."""
     try:
-        resp = await client.datasets()
+        return await cache.get(fetch)
     except YenteError:
-        return _dataset_titles_cache[1] if _dataset_titles_cache is not None else {}
-    titles = {d.name: d.title for d in resp.datasets if d.title}
-    _dataset_titles_cache = (now, titles)
-    return titles
+        return None
 
 
-async def _program_catalog(client: AsyncClient) -> list[Program]:
-    """The sanctions-program catalog, cached process-wide (it's a global artifact).
+@contextlib.contextmanager
+def _tool_errors() -> Iterator[None]:
+    """Turn an SDK error into a tool error saying what failed and whether to retry.
 
-    Raises ``YenteError`` on a failed fetch — describe_program wants the error;
-    the legend path wraps this in :func:`_program_titles` instead.
+    A context manager rather than middleware: FastMCP wraps a tool's exception
+    in its own ``ToolError`` before middleware sees it.
     """
-    global _program_catalog_cache
-    now = time.monotonic()
-    if _program_catalog_cache is not None:
-        fetched_at, catalog = _program_catalog_cache
-        if now - fetched_at < _GLOSSARY_TTL_SECONDS:
-            return catalog
-    resp = await client.programs()
-    _program_catalog_cache = (now, resp.data)
-    return resp.data
-
-
-async def _program_titles(client: AsyncClient) -> dict[str, str]:
-    """Program key → title; the failure-soft face of :func:`_program_catalog`."""
     try:
-        catalog = await _program_catalog(client)
-    except YenteError:
-        return {}
-    return {p.key: p.title for p in catalog if p.title}
+        yield
+    except YenteError as exc:
+        raise ToolError(describe_error(exc)) from exc
 
 
-async def _attach_glossaries(
-    out: dict[str, Any], shaped: list[dict[str, Any]], client: AsyncClient
-) -> None:
-    """Attach dataset / program title legends for the codes present in ``shaped``.
+async def _with_legend(
+    out: dict[str, Any],
+    client: AsyncClient,
+    codes: legend.LegendCodes | None = None,
+    *,
+    as_of: bool = True,
+) -> dict[str, Any]:
+    """Attach the response's ``legend`` for every code it mentions, and return it.
 
-    Legends are looked up live (cached) and failure-soft: one that can't be
-    built is omitted, never an error. The program catalog is only fetched when
-    a result actually carries a ``programId``.
+    The legend's ``as_of`` dates the data an entity response came from;
+    describe records pass ``as_of=False``.
+
+    ``codes`` replaces the walk of ``out`` when the caller knows codes the walk
+    can't see (relation keys, a describe record's countries). Program and
+    feature lookups are live (cached), failure-soft, and only run when the
+    response carries a code they resolve. A response with nothing to resolve
+    gets no legend at all, not one holding only link templates.
     """
-    dataset_names = {n for r in shaped for n in r.get("datasets", ())}
-    if dataset_names:
-        legend = shaping.title_glossary(dataset_names, await _dataset_titles(client))
-        if legend:
-            out["dataset_titles"] = legend
-    program_ids = {p for r in shaped for p in r.get("properties", {}).get("programId", ())}
-    if program_ids:
-        legend = shaping.title_glossary(program_ids, await _program_titles(client))
-        if legend:
-            out["program_titles"] = legend
+    if codes is None:
+        codes = legend.collect_codes(out)
+    catalog = await _soft(_catalog, client.datasets)
+    programs = algorithms = None
+    if codes.programs:
+        programs = await _soft(_programs, client.programs)
+    if codes.features:
+        algorithms = await _soft(_algorithms, client.algorithms)
+    resolved = legend.build_legend(
+        codes,
+        datasets=legend.dataset_records(catalog) if catalog else {},
+        programs=legend.program_records(programs.data) if programs else {},
+        features=legend.feature_descriptions(algorithms) if algorithms else {},
+        links=_LINKS,
+        as_of=legend.as_of(catalog, DATASET) if catalog and as_of else None,
+    )
+    if resolved.keys() - {"links"}:
+        out["legend"] = resolved
+    return out
+
+
+def _cap(limit: int) -> int:
+    """Clamp a caller's page size to between 1 and :data:`_MAX_PAGE_SIZE`."""
+    return max(1, min(limit, _MAX_PAGE_SIZE))
 
 
 def _build_entity(schema: str, properties: dict[str, list[str]]) -> EntityInput:
     """Construct a typed input entity from a schema name + property bag."""
-    schema_cls = getattr(entities, schema, None)
-    if not isinstance(schema_cls, type):
-        raise ToolError(
-            f"Unknown FtM schema {schema!r}. Call describe_schema() for matchable schemata."
-        )
     try:
-        entity: EntityInput = schema_cls(**properties)
+        schema_cls = entity_class(schema)
+    except KeyError:
+        raise ToolError(shaping.unknown_schema(schema)) from None
+    try:
+        return schema_cls.model_validate(properties)
     except ValidationError as exc:
         raise ToolError(f"Invalid properties for schema {schema!r}: {exc}") from exc
-    return entity
 
 
 # ----- tools -----
 
 
-@mcp.tool(title="Screen against watchlists", annotations=_READ_ONLY)
+@mcp.tool(title="Screen against watchlists", annotations=_READ_ONLY, output_schema=None)
 async def match_entity(
     schema: str,
     properties: dict[str, list[str]],
     *,
-    dataset: str = "default",
+    dataset: str = DATASET,
     threshold: float | None = None,
+    cutoff: float | None = None,
     topics: list[str] | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    """Screen one entity against sanctions/PEP/watchlist data; return scored candidates.
+    """Screen one person, company, vessel or other entity; return scored candidates.
 
-    Query-by-example: describe the entity in as much detail as you can and the
-    API returns ranked candidates. Use for ANY matching task, even with partial
-    data. `schema` is an FtM type (Person, Company, ...) and `properties` maps
-    FtM property names to value lists ({"name": ["Jane Doe"], "birthDate":
-    ["1975"]}) — call describe_schema first if unsure of the names. Send every
-    property you have. Country values accept free text ("Russia"); the server
-    normalizes them, and matching works by value type rather than field name,
-    so don't agonize over e.g. `country` vs `jurisdiction`.
+    The tool for every "is this party listed?" question, even from just a
+    name. Describe the entity as fully as you can: `schema` is its FtM schema
+    and `properties` maps property names to value lists, e.g. {"name": ["Jane
+    Doe"], "birthDate": ["1975"], "nationality": ["Russia"]}. Send every
+    property you have — identifiers (imoNumber, registrationNumber) and dates
+    settle what names alone can't. Screen each party in its own call.
 
-    `score` is 0-1 confidence; `match` is true when score >= `threshold`
-    (server default 0.7). Results are trimmed views — expand a candidate with
-    fetch_entity_by_id.
+    `topics` sets what kind of listing to screen for. A candidate qualifies if
+    it carries any of the given codes, matched exactly: for sanctions pass
+    ["sanction", "sanction.linked", "sanction.control"], for politically
+    exposed persons ["role.pep", "role.rca"]. Unset, the screen covers every
+    listing. describe(kind="topics") lists every code.
+
+    Each candidate has a `score` (0-1), `match` (score at or above the
+    threshold) and an `explanation`: the scoring features with the query and
+    candidate values each compared. A fuzzy name with nothing else agreeing is
+    a lead, not an identification; identifiers and dates the query lacked are
+    what would settle it. Candidates are abridged to their identity, topics
+    and counts; profile the ones worth a closer look. When no candidate clears the
+    cutoff, `near_misses` shows the closest ones and why they fell short. `checked`
+    echoes the scope screened.
+
+    Args:
+        dataset: Collection to screen against; the default covers every source
+            the server loads.
+        threshold: Score at which `match` turns true; leave to the server.
+        cutoff: Score below which candidates are dropped; leave to the server.
+        limit: Candidates to return, at most 25.
     """
     entity = _build_entity(schema, properties)
     client = _resolve_client()
-    try:
-        resp = await client.match(
-            entity,
-            threshold=threshold,
-            limit=limit,
-            datasets=[dataset],
-            topics=topics,
-        )
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
-    shaped = [shaping.shape_scored(r) for r in resp.results]
-    out: dict[str, Any] = {"query_schema": schema, "total": resp.total.value, "results": shaped}
-    await _attach_glossaries(out, shaped, client)
-    return out
+    screen = functools.partial(
+        client.match, entity, threshold=threshold, datasets=[dataset], topics=topics
+    )
+    with _tool_errors():
+        resp = await screen(cutoff=cutoff, limit=None if limit is None else _cap(limit))
+        near_misses = None
+        if not resp.results and cutoff is None:
+            near_misses = await screen(cutoff=0.0, limit=_NEAR_MISS_LIMIT)
+    checked = {
+        "dataset": dataset,
+        "topics": topics,
+        "threshold": threshold,
+        "cutoff": cutoff,
+    }
+    results = [shaping.shape_scored(r) for r in resp.results]
+    out: dict[str, Any] = {
+        "query_schema": schema,
+        "checked": {k: v for k, v in checked.items() if v is not None},
+        "total": resp.total.value,
+        "returned": len(results),
+        "results": results,
+    }
+    if near_misses is not None and near_misses.results:
+        out["near_misses"] = [shaping.shape_scored(r) for r in near_misses.results]
+    # `checked` echoes the caller's own scope, which needs no glossing.
+    codes = legend.collect_codes({k: v for k, v in out.items() if k != "checked"})
+    return await _with_legend(out, client, codes)
 
 
-@mcp.tool(title="Search entities", annotations=_READ_ONLY)
+@mcp.tool(title="Search entities", annotations=_READ_ONLY, output_schema=None)
 async def search_entities(
     q: str,
     *,
-    dataset: str = "default",
+    dataset: str = DATASET,
     schema: str | None = None,
     countries: list[str] | None = None,
     topics: list[str] | None = None,
-    limit: int | None = None,
+    limit: int = _PAGE_SIZE,
     offset: int = 0,
     fuzzy: bool = False,
     simple: bool = False,
 ) -> dict[str, Any]:
-    """Free-text search over the database; returns plain (unscored) entities.
+    """Browse the database by keyword; return unscored entities.
 
-    For end-user search UIs — autocomplete, browse pages, boxes where a human
-    is typing the input. Not a fallback for match_entity: any match/no-match
-    decision on a known person or company uses match_entity, even with partial
-    input.
+    For exploring: what a term turns up, narrowed by schema, country or topic
+    (vessels flagged to a country, companies with a word in their name).
+    Never use it to decide whether a person or company is listed — results
+    carry no score or explanation, so neither a hit nor its absence proves
+    anything. Use match_entity for that, even with just a name. Results are
+    abridged to their identity, topics and counts.
+
+    Args:
+        limit: Results per page (default 10), at most 25.
+        fuzzy: Tolerate spelling variation in `q`.
+        simple: Read `q` as plain words, as typed into a search box, rather
+            than query syntax (AND / OR, quotes, field:value).
     """
     client = _resolve_client()
-    kwargs: dict[str, Any] = {"datasets": [dataset]}
-    if schema is not None:
-        kwargs["schema"] = schema
-    if countries is not None:
-        kwargs["countries"] = countries
-    if topics is not None:
-        kwargs["topics"] = topics
-    try:
+    with _tool_errors():
         resp = await client.search(
-            q, limit=limit, offset=offset, fuzzy=fuzzy, simple=simple, **kwargs
+            q,
+            limit=_cap(limit),
+            offset=offset,
+            fuzzy=fuzzy,
+            simple=simple,
+            datasets=[dataset],
+            schema=schema,
+            countries=countries,
+            topics=topics,
         )
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
-    shaped = [shaping.shape_entity(r) for r in resp.results]
-    out: dict[str, Any] = {"total": resp.total.value, "results": shaped}
-    await _attach_glossaries(out, shaped, client)
-    return out
+    out = shaping.page(
+        [shaping.shape(r, "ref") for r in resp.results],
+        resp.total,
+        offset,
+        "search_entities",
+        q=q,
+        dataset=None if dataset == DATASET else dataset,
+        schema=schema,
+        countries=countries,
+        topics=topics,
+        limit=None if limit == _PAGE_SIZE else limit,
+        fuzzy=fuzzy or None,
+        simple=simple or None,
+    )
+    return await _with_legend(out, client)
 
 
-@mcp.tool(title="Fetch entity by ID", annotations=_READ_ONLY)
-async def fetch_entity_by_id(entity_id: str) -> dict[str, Any]:
-    """Fetch one entity by its OpenSanctions ID — its full own record.
+@mcp.tool(title="Profile an entity", annotations=_READ_ONLY, output_schema=None)
+async def fetch_entity_by_id(entity_id: str, *, full: bool = False) -> dict[str, Any]:
+    """Profile one entity by ID: the call for "tell me about X".
 
-    Returns the entity and all its intrinsic properties (names, dates,
-    identifiers, addresses, …). Relationships (sanctions, ownership, family) are
-    NOT here — traverse those with fetch_entity_relations. Use to expand a
-    candidate from match_entity / search_entities, or a counterparty id returned
-    by fetch_entity_relations. Needs a real entity ID, not a name.
+    Returns the entity's record (names, dates, identifiers, addresses) and
+    the first few records of its risk basis:
 
-    Topic and country codes arrive resolved, as top-level `topics` /
-    `countries` code → label maps. If the returned `id` differs from the one
-    requested, the entity was merged during deduplication — update any stored
-    reference to the new canonical ID. The `referents` field lists the
-    source-record and superseded IDs that map to this entity.
+    - `sanctions`: designations that impose a restriction (program,
+      authority, dates).
+    - `risks`: listings that name the entity without a restriction (watch
+      lists, advisories, persons-of-interest registers).
+    - `positionOccupancies`: positions held, with country, dates and status.
+
+    `relations` previews every other relationship type (ownership,
+    directorships, family, associates, …) the same way. Each section and type
+    carries its `total`, and `next` names the call for the rest. Each edge
+    keeps its own details (role, share, relationship, dates); the entity at its
+    far end is abridged to its identity, topics and counts. Prose is left out:
+    `narrative_text` names the call for the notes and designation reasons. The
+    record's `first_seen` / `last_change` say when it entered the data and
+    last changed.
+
+    If `relations_unavailable` is set, sanctions and relations could not be
+    read, so their absence says nothing about a listing. A returned `id`
+    other than the one requested means the entity was merged into another,
+    and the returned ID is the current one.
+
+    Args:
+        full: Return the raw record instead, including `referents` (the
+            source records merged into it), without relations.
     """
     client = _resolve_client()
-    try:
+    with _tool_errors():
         entity = await client.fetch(entity_id, nested=False)
+    if full:
+        return await _with_legend(shaping.shape_raw(entity), client)
+    try:
+        adjacency = await client.adjacent(entity.id, limit=_PROFILE_EDGES)
     except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
-    # The detail tool: the full node (untrimmed) plus the inline glossaries.
-    record = shaping.shape_full_record(entity)
-    await _attach_glossaries(record, [record], client)
-    return record
+        profile = shaping.shape(entity)
+        profile["relations_unavailable"] = describe_error(exc)
+        return await _with_legend(profile, client)
+    return await _with_legend(shaping.shape_profile(entity, adjacency), client)
 
 
-@mcp.tool(title="Fetch entity relations", annotations=_READ_ONLY)
+@mcp.tool(
+    title="Read source descriptions and designation reasons",
+    annotations=_READ_ONLY,
+    output_schema=None,
+)
+async def fetch_entity_descriptions(entity_id: str, *, offset: int = 0) -> dict[str, Any]:
+    """Read what sources write about an entity, verbatim and credited.
+
+    The place to answer "why is this entity listed?", to give background on a
+    person or company, or to quote a source. The reasons given for each
+    sanction and risk listing come first, each with its designating record
+    (authority, program, dates), then the entity's own descriptions and
+    biography notes. Every entry names its `sources` (dataset, first seen),
+    official sources first; identical texts from several sources appear once,
+    translations separately with their `lang`.
+
+    While `next` is set, it names the call for the next page. `credits_unavailable` means
+    the texts carry no per-source credits (a self-hosted yente has no
+    statement store); `relations_unavailable` means designation reasons could
+    not be read.
+    """
+    client = _resolve_client()
+    with _tool_errors():
+        entity = await client.fetch(entity_id, nested=False)
+    text_props = shaping.prose_names(entity.schema_)
+    edge_props = shaping.designation_props(entity.schema_)
+    statement_calls = [
+        client.statements(canonical_id=entity.id, prop=prop, limit=_STATEMENT_READ)
+        for prop in text_props
+    ]
+    edge_calls = [client.adjacent(entity.id, prop=p, limit=_SECTION_READ) for p in edge_props]
+    results = await asyncio.gather(*statement_calls, *edge_calls, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException) and not isinstance(result, YenteError):
+            raise result
+    statement_results = results[: len(statement_calls)]
+    edge_results = results[len(statement_calls) :]
+
+    out: dict[str, Any] = {"id": entity.id, "caption": entity.caption, "schema": entity.schema_}
+    statements: list[Statement] | None = []
+    for resp in statement_results:
+        if isinstance(resp, StatementsResponse) and statements is not None:
+            statements.extend(resp.results)
+        else:
+            statements = None
+    if statements is None:
+        out["credits_unavailable"] = True
+    designations: dict[str, list[Entity]] = {}
+    for prop, resp in zip(edge_props, edge_results, strict=True):
+        if isinstance(resp, AdjacentPropertyResponse):
+            designations[prop] = [e for e in resp.results if isinstance(e, Entity)]
+        elif isinstance(resp, YenteError):
+            out["relations_unavailable"] = describe_error(resp)
+    catalog = await _soft(_catalog, client.datasets)
+    records = legend.dataset_records(catalog) if catalog else {}
+    unofficial = {name for name, rec in records.items() if rec.get("official") is False}
+    entries = shaping.text_entries(entity, statements, designations, unofficial)
+    out.update(
+        shaping.page_entries(
+            entries, offset, _TEXT_PAGE_CHARS, "fetch_entity_descriptions", entity_id=entity.id
+        )
+    )
+    return await _with_legend(out, client)
+
+
+@mcp.tool(title="Fetch entity relations", annotations=_READ_ONLY, output_schema=None)
 async def fetch_entity_relations(
     entity_id: str,
     *,
     prop: str | None = None,
-    limit: int = 50,
+    # None, not _PAGE_SIZE: without `prop` the limit is per type, defaulting
+    # to the overview's _OVERVIEW_EDGES.
+    limit: int | None = None,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Traverse an entity's relationship graph — sanctions, owners, directors, family.
+    """Page through one relationship type of an entity in full.
 
-    Call with no `prop` first for an overview: every edge type with its total
-    count and a capped first page. Then pass a `prop` ("sanctions",
-    "ownershipOwner", "directorshipDirector", …) to walk one type, paging large
-    "hub" nodes with `limit` / `offset`. Each result is the edge with its
-    counterparty resolved to {id, caption, schema}; call fetch_entity_by_id on
-    that id for the counterparty's full record. Prop names come from this tool's
-    overview keys or from describe_schema. Beta; shape may change.
+    A relationship is itself an entity (Ownership, Directorship, Family, …)
+    linking two others, and `prop` names the side this entity is on — the keys
+    of a profile's `relations`, or `sanctions` / `risks` /
+    `positionOccupancies`. For a company, "ownershipOwner" lists what it owns
+    and "ownershipAsset" who owns it. Each edge carries its own properties
+    (role, share, dates); the entity at its far end is abridged to its
+    identity, topics and counts. Pages hold `limit` edges (default 10,
+    at most 25); `next` names the call for the next page and is null on the
+    last.
+    `total` counts every edge, read or not. With no `prop`, returns every
+    type with its total and first few edges.
     """
     if prop in shaping.HIDDEN_RELATION_PROPS:
         raise ToolError(
@@ -379,157 +635,152 @@ async def fetch_entity_relations(
             "(fetch_entity_by_id) for its risk basis."
         )
     client = _resolve_client()
-    try:
+    with _tool_errors():
         if prop is None:
-            overview = await client.adjacent(entity_id, limit=limit, offset=offset)
-            return shaping.shape_adjacency(overview)
-        block = await client.adjacent(entity_id, prop=prop, limit=limit, offset=offset)
-        return shaping.shape_adjacency_property(block, entity_id)
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
+            overview = await client.adjacent(
+                entity_id, limit=_cap(_OVERVIEW_EDGES if limit is None else limit), offset=offset
+            )
+            out = shaping.shape_adjacency(overview)
+            codes = legend.collect_codes(out)
+            codes.add_properties(overview.entity.schema_, out)
+        else:
+            block = await client.adjacent(
+                entity_id,
+                prop=prop,
+                limit=_cap(_PAGE_SIZE if limit is None else limit),
+                offset=offset,
+            )
+            out = shaping.shape_relation_page(block, entity_id, prop, limit=limit)
+            codes = legend.collect_codes(out)
+            codes.add_properties(None, [prop])
+    return await _with_legend(out, client, codes)
 
 
-@mcp.tool(title="Audit entity provenance", annotations=_READ_ONLY)
+@mcp.tool(title="Audit entity provenance", annotations=_READ_ONLY, output_schema=None)
 async def fetch_entity_statements(
     entity_id: str,
     *,
     prop: str | None = None,
     dataset: str | None = None,
-    limit: int = 50,
+    sort: list[str] | None = None,
+    limit: int = _PAGE_SIZE,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Audit where an entity's data came from, statement by statement.
+    """Trace which source asserted each value of an entity, and when.
 
-    Each statement is one property-value claim plus the dataset that asserted
-    it and when it was first and last seen. Use after a hit to answer "which
-    source says this?" — e.g. which list contributed an alias, birth date, or
-    address. `entity_id` is the canonical ID from match/search/fetch results;
-    each row's `entity_id` names the pre-deduplication source record that was
-    merged into it. Narrow with `prop` (e.g. "alias") or `dataset`. Available
-    on the hosted OpenSanctions API only — a self-hosted yente has no
-    statement store and errors here.
+    A statement is one property value plus the dataset that asserted it and
+    when it was first and last seen. Use it for "which source says this?" (an
+    alias, a birth date, an address) or, with sort=["first_seen:desc"], for
+    "what changed since a date". Sanctions and positions are entities of their
+    own with their own statements: pass their IDs from the profile to check
+    them too. Narrow with `prop` (e.g. "alias") or `dataset`. Each row's
+    `entity_id` is the source record that was merged into the entity. Hosted
+    OpenSanctions API only; a self-hosted yente errors here.
+
+    Args:
+        limit: Statements per page (default 10), at most 25.
     """
     client = _resolve_client()
-    try:
+    with _tool_errors():
         resp = await client.statements(
             canonical_id=entity_id,
             prop=prop,
             dataset=dataset,
-            limit=limit,
+            sort=sort,
+            limit=_cap(limit),
             offset=offset,
         )
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
-    return shaping.shape_statements(resp)
+    out = shaping.shape_statements(
+        resp,
+        entity_id=entity_id,
+        prop=prop,
+        dataset=dataset,
+        sort=sort,
+        limit=None if limit == _PAGE_SIZE else limit,
+    )
+    return await _with_legend(out, client)
 
 
-@mcp.tool(title="Describe FollowTheMoney (FtM) schema", annotations=_READ_ONLY)
-def describe_schema(schema: str | None = None) -> dict[str, Any]:
-    """Look up the FtM data model (offline). No arg → index of matchable schemata;
-    a name (e.g. "Person") → its settable `properties` (the fields you fill in a
-    match_entity query, with real names like `birthDate`) plus `relations` (the
-    entity edges: pass a relation's `name` as `prop` to fetch_entity_relations,
-    `range` is the schema it points at, `reverse` is the source's role on the far
-    entity). Use before match_entity.
+_TOPICS_ABOUT = (
+    "Topics are tags on an entity saying why it is in the data or what kind of "
+    "entity it is. Codes form dotted families: `sanction*` (listed, or owned, "
+    "controlled or otherwise linked to a listed entity), `role.pep*` and "
+    "`role.rca` (politically exposed persons and their close associates), "
+    "`crime.*`, `debarment`, `wanted`, `reg.*` (offences and official action), "
+    "`export.*` and `mare.*` (trade and shipping restrictions), and descriptive "
+    "families such as `gov.*`, `fin.*` and `corp.*`. A tag is not an "
+    "accusation: being a PEP calls for closer scrutiny, not suspicion. As a "
+    "filter, a topic matches its exact code only — `sanction` "
+    "does not include `sanction.linked` — and an entity qualifies if it "
+    "carries any of the codes given."
+)
+
+_NAME_EXAMPLES = {"dataset": "us_ofac_sdn", "program": "US-RUSHAR"}
+
+
+@mcp.tool(title="Describe codes and sources", annotations=_READ_ONLY, output_schema=None)
+async def describe(
+    kind: Literal["schema", "topics", "countries", "dataset", "program"],
+    name: str | None = None,
+) -> dict[str, Any]:
+    """Look up the data model's vocabulary or one source record.
+
+    - `schema`: without `name`, the schemata match_entity accepts; with one
+      ("Person", "Vessel"), its `properties` — the names match_entity takes,
+      such as `birthDate` or `imoNumber` — and its `relations`, the keys
+      fetch_entity_relations takes, with `range` the schema each points to.
+    - `topics`: what the topic tags mean, and every code with its label, for
+      the `topics` filter of match_entity and search_entities.
+    - `countries`: every country and jurisdiction code with its name, for the
+      `countries` filter of search_entities (match_entity takes names).
+    - `dataset`: one source by `name` (e.g. "us_ofac_sdn", from an entity's
+      `datasets` or the legend) — publisher, summary, coverage, update times.
+    - `program`: one sanctions program by `name`, its key (e.g. "US-RUSHAR",
+      an entity's `programId`) — issuer, policy summary, measures, links.
+
+    Codes in results already resolve through the `legend`. An unknown dataset
+    or program name returns the closest matches.
     """
-    if schema is None:
-        return {"schemata": introspect.schema_index()}
-    try:
-        return introspect.describe_schema(schema)
-    except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+    if kind in ("topics", "countries") and name is not None:
+        raise ToolError(f'describe(kind="{kind}") takes no name; it lists every code.')
+    if kind in ("dataset", "program"):
+        if name is None:
+            example = _NAME_EXAMPLES[kind]
+            raise ToolError(f'describe(kind="{kind}") needs a name, e.g. "{example}".')
+        lookup = _describe_dataset if kind == "dataset" else _describe_program
+        return await lookup(name)
+    if kind == "schema":
+        if name is None:
+            return {"schemata": schemas.schema_index(matchable_only=True)}
+        if not schemas.has_schema(name):
+            raise ToolError(shaping.unknown_schema(name))
+        return schemas.describe_schema(name)
+    if kind == "topics":
+        return {"about": _TOPICS_ABOUT, "topics": schemas.type_values("topic")}
+    return schemas.type_values("country")
 
 
-@mcp.tool(title="Describe topic tags", annotations=_READ_ONLY)
-def describe_topics() -> dict[str, str]:
-    """List the risk-topic vocabulary — the whole `topic` type (value → label).
-
-    Use to pick values for the `topics` filter on match_entity /
-    search_entities (`sanction`, `role.pep`, …). Topic codes in results arrive
-    already labelled; this is the full menu.
-    """
-    return introspect.topic_values()
-
-
-@mcp.tool(title="Describe country codes", annotations=_READ_ONLY)
-def describe_countries() -> dict[str, str]:
-    """List the country / jurisdiction vocabulary — the whole `country` type (code → name).
-
-    Use to pick codes for the `countries` filter on search_entities, or to
-    resolve a code met outside shaped results (e.g. in a full record from
-    fetch_entity_by_id). Country codes in match/search results arrive with a
-    `countries` glossary already attached.
-    """
-    return introspect.country_values()
-
-
-@mcp.tool(title="Describe a dataset", annotations=_READ_ONLY)
-async def describe_dataset(name: str | None = None) -> dict[str, Any]:
-    """Resolve dataset names to their metadata (live catalog).
-
-    No arg → a compact index of every indexed dataset (name, title, tags like
-    `list.sanction` / `list.pep`, entity_count) for discovery. A name (e.g.
-    "us_ofac_sdn") → that dataset's full record: title, summary, publisher,
-    coverage, counts, freshness. Dataset names in results already arrive with
-    a `dataset_titles` legend; call this when the analyst needs the dataset's
-    substance — who publishes it, what it covers, how fresh it is.
-    """
+async def _describe_dataset(name: str) -> dict[str, Any]:
+    """One dataset record from the live catalog, with its legend."""
     client = _resolve_client()
-    try:
-        resp = await client.datasets()
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
-    if name is None:
-        return {"datasets": shaping.dataset_index(resp)}
+    with _tool_errors():
+        resp = await _catalog.get(client.datasets)
     for dataset in resp.datasets:
         if dataset.name == name:
-            return dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
-    raise ToolError(f"Unknown dataset {name!r}. Call describe_dataset() for the catalog index.")
+            out = dataset.model_dump(by_alias=True, mode="json", exclude_none=True)
+            return await _with_legend(out, client, legend.dataset_codes(dataset), as_of=False)
+    titles = {d.name: d.title for d in resp.datasets}
+    raise ToolError(shaping.unknown_name("dataset", name, titles))
 
 
-@mcp.tool(title="Describe a sanctions program", annotations=_READ_ONLY)
-async def describe_program(key: str | None = None) -> dict[str, Any]:
-    """Resolve `programId` codes to sanctions-program metadata.
-
-    No arg → a compact index of every program (key, title, issuer territory).
-    A key (e.g. "US-RUSHAR" — the `programId` values sanctioned entities
-    carry) → that program's full record: title, issuer, policy summary,
-    measures, and links. Program codes in results already arrive with a
-    `program_titles` legend; call this when the analyst needs the program's
-    substance — who imposed it, why, and what it restricts.
-    """
+async def _describe_program(key: str) -> dict[str, Any]:
+    """One sanctions program by key or alias, with its legend."""
     client = _resolve_client()
-    try:
-        catalog = await _program_catalog(client)
-    except YenteError as exc:
-        raise ToolError(describe_error(exc)) from exc
-    if key is None:
-        return {"programs": shaping.program_index(catalog)}
+    with _tool_errors():
+        catalog = (await _programs.get(client.programs)).data
     for program in catalog:
         if program.key == key or key in program.aliases:
-            return program.model_dump(mode="json", exclude_none=True)
-    raise ToolError(f"Unknown program {key!r}. Call describe_program() for the index.")
-
-
-# ----- resources: ftm:// (static, bundled model, no server call) -----
-
-
-@mcp.resource("ftm://schemata")
-def ftm_schemata() -> list[dict[str, Any]]:
-    """Index of matchable FtM schemata."""
-    return introspect.schema_index()
-
-
-@mcp.resource("ftm://schema/{name}")
-def ftm_schema(name: str) -> dict[str, Any]:
-    """Property detail for one FtM schema."""
-    return introspect.describe_schema(name)
-
-
-# Topic / country vocabularies are the describe_topics / describe_countries *tools*
-# above, not resources: the model needs them to pick filter values mid-conversation
-# and clients don't reliably read resources (for the same reason, dataset lookup is
-# the describe_dataset tool). Gender values ("male", "female", …) are
-# self-explanatory, so there's no lookup for them at all. There is no yente://
-# resource for live server state: the one candidate, the algorithm catalog, is
-# deliberately unexposed (see the module docstring).
+            out = program.model_dump(mode="json", exclude_none=True)
+            return await _with_legend(out, client, legend.program_codes(program), as_of=False)
+    titles = {p.key: p.title for p in catalog}
+    raise ToolError(shaping.unknown_name("program", key, titles))

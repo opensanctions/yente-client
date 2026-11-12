@@ -1,31 +1,30 @@
-"""Tests for the entity-trimming the MCP tools return.
+"""Tests for the entity projection the MCP tools return.
 
 Pure functions over the SDK response models — no network, no FastMCP.
 """
 
 from datetime import datetime
 
+from yente_client.mcp.legend import collect_codes
 from yente_client.mcp.shaping import (
-    dataset_index,
-    program_index,
+    page,
+    page_entries,
+    shape,
     shape_adjacency,
-    shape_adjacency_property,
-    shape_edge,
-    shape_entity,
-    shape_full_record,
+    shape_profile,
+    shape_raw,
+    shape_relation_page,
     shape_scored,
     shape_statements,
-    title_glossary,
+    text_entries,
+    tool_call,
+    unknown_name,
 )
 from yente_client.models import (
     AdjacentPropertyResponse,
     AdjacentResponse,
-    Dataset,
-    DatasetsResponse,
     Entity,
     FeatureResult,
-    Program,
-    ProgramIssuer,
     ScoredEntity,
     Statement,
     StatementsResponse,
@@ -34,135 +33,180 @@ from yente_client.models import (
 from yente_client.schemas import type_values
 
 
-def test_shape_entity_keeps_core_identity_fields() -> None:
+def _total(value: int) -> TotalSpec:
+    return TotalSpec(value=value, relation="eq")
+
+
+def _page(results: list[str | Entity], total: int, offset: int = 0) -> AdjacentPropertyResponse:
+    return AdjacentPropertyResponse(results=results, total=_total(total), limit=50, offset=offset)
+
+
+def _sanction(id: str, source: str = "P1", **props: list[str]) -> Entity:
+    return Entity(
+        id=id, caption="Sanction", schema="Sanction", properties={"entity": [source], **props}
+    )
+
+
+def test_shape_summary_keeps_identity_dates_and_datasets() -> None:
     entity = Entity(
         id="Q1",
         caption="Jane Doe",
         schema="Person",
         properties={"name": ["Jane Doe"]},
         datasets=["us_ofac_sdn"],
+        first_seen=datetime(2022, 3, 1, 10, 0),
+        last_change=datetime(2026, 10, 13, 8, 30),
     )
-    shaped = shape_entity(entity)
-    assert shaped["id"] == "Q1"
-    assert shaped["caption"] == "Jane Doe"
-    assert shaped["schema"] == "Person"
-    assert shaped["datasets"] == ["us_ofac_sdn"]
-    assert shaped["properties"]["name"] == ["Jane Doe"]
+    shaped = shape(entity)
+    assert shaped == {
+        "id": "Q1",
+        "caption": "Jane Doe",
+        "schema": "Person",
+        "datasets": ["us_ofac_sdn"],
+        "properties": {"name": ["Jane Doe"]},
+        "first_seen": "2022-03-01",
+        "last_change": "2026-10-13",
+    }
 
 
-def test_shape_entity_keeps_only_allowlisted_properties() -> None:
+def test_shape_summary_picks_properties_by_schema() -> None:
+    vessel = Entity(
+        id="V1",
+        caption="ANGARA",
+        schema="Vessel",
+        properties={"name": ["ANGARA"], "imoNumber": ["IMO9179842"], "flag": ["ru"]},
+    )
+    assert shape(vessel)["properties"] == {
+        "name": ["ANGARA"],
+        "imoNumber": ["IMO9179842"],
+        "flag": ["ru"],
+    }
+    person = Entity(
+        id="P1",
+        caption="x",
+        schema="Person",
+        properties={"birthPlace": ["Leningrad"], "citizenship": ["ru"], "gender": ["male"]},
+    )
+    assert set(shape(person)["properties"]) == {"birthPlace", "citizenship", "gender"}
+
+
+def test_shape_summary_drops_prose() -> None:
+    entity = Entity(
+        id="P1",
+        caption="x",
+        schema="Person",
+        properties={"name": ["x"], "notes": ["long biography"]},
+    )
+    assert shape(entity)["properties"] == {"name": ["x"]}
+
+
+def test_shape_summary_drops_prose_on_relation_records() -> None:
+    edge = _sanction("s1", reason=["sanctioned because X"], authority=["OFAC"])
+    props = shape(edge, source_id="P1")["properties"]
+    assert props == {"authority": ["OFAC"]}  # reason left out, back-ref dropped
+
+
+def test_shape_ignores_unknown_properties_and_schemata() -> None:
+    entity = Entity(id="Q1", caption="x", schema="Person", properties={"bogus": ["v"]})
+    assert shape(entity)["properties"] == {}
+    unknown = Entity(id="Q2", caption="x", schema="NoSuchSchema", properties={"name": ["x"]})
+    assert shape(unknown)["properties"] == {}
+
+
+def test_shape_resolves_topics_inline_at_every_level() -> None:
     entity = Entity(
         id="Q1",
         caption="x",
         schema="Person",
-        properties={"name": ["x"], "birthDate": ["1975"], "notes": ["junk"]},
+        properties={"topics": ["sanction", "not.a.real.topic"]},
     )
-    props = shape_entity(entity)["properties"]
-    assert "birthDate" in props
-    assert "notes" not in props
+    labels = type_values("topic")
+    for level in ("stub", "summary"):
+        shaped = shape(entity, level)
+        assert shaped["topics"] == {
+            "sanction": labels["sanction"],
+            "not.a.real.topic": "not.a.real.topic",
+        }
+        assert "topics" not in shaped.get("properties", {})  # promoted, not duplicated
 
 
-def test_shape_entity_omits_absent_and_empty_properties() -> None:
-    entity = Entity(id="Q1", caption="x", schema="Person", properties={"name": ["x"]})
-    props = shape_entity(entity)["properties"]
-    assert set(props) == {"name"}
-
-
-def test_shape_entity_drops_nested_entity_values() -> None:
-    nested = Entity(id="a1", caption="1 Main St", schema="Address")
+def test_shape_stub_is_identity_topics_and_featured_properties() -> None:
     entity = Entity(
-        id="Q1",
-        caption="x",
-        schema="Person",
-        properties={"address": ["1 Main St", nested]},
+        id="c1",
+        caption="ACME",
+        schema="Company",
+        properties={
+            "topics": ["sanction"],
+            "name": ["ACME"],
+            "jurisdiction": ["cy"],
+            "notes": ["not featured"],
+        },
+        datasets=["x"],
     )
-    # Only the plain string survives; follow nested edges via fetch_entity_relations.
-    assert shape_entity(entity)["properties"]["address"] == ["1 Main St"]
+    assert shape(entity, "stub") == {
+        "id": "c1",
+        "caption": "ACME",
+        "schema": "Company",
+        "topics": {"sanction": type_values("topic")["sanction"]},
+        "properties": {"jurisdiction": ["cy"]},  # name only repeats the caption
+        "abridged": 'fetch_entity_by_id(entity_id="c1")',
+    }
 
 
-def test_shape_entity_resolves_topics_inline() -> None:
-    entity = Entity(
-        id="Q1",
-        caption="x",
-        schema="Person",
-        properties={"name": ["x"], "topics": ["sanction", "crime.war"]},
+def test_shape_stub_gives_a_position_its_country() -> None:
+    post = Entity(
+        id="pos1",
+        caption="Member of the Duma",
+        schema="Position",
+        properties={"name": ["Member of the Duma"], "country": ["ru"]},
     )
-    shaped = shape_entity(entity)
-    # topics leave `properties` and become a top-level code → label map
-    assert "topics" not in shaped["properties"]
-    vocab = type_values("topic")
-    assert shaped["topics"] == {"sanction": vocab["sanction"], "crime.war": vocab["crime.war"]}
-
-
-def test_shape_entity_unknown_topic_falls_back_to_code() -> None:
-    entity = Entity(id="Q1", caption="x", schema="Person", properties={"topics": ["not.a.topic"]})
-    assert shape_entity(entity)["topics"] == {"not.a.topic": "not.a.topic"}
-
-
-def test_shape_entity_no_topics_key_when_absent() -> None:
-    entity = Entity(id="Q1", caption="x", schema="Person", properties={"name": ["x"]})
-    assert "topics" not in shape_entity(entity)
-
-
-def test_shape_entity_adds_country_glossary() -> None:
-    entity = Entity(
-        id="Q1",
-        caption="x",
-        schema="Person",
-        properties={"nationality": ["ru"], "country": ["de"]},
+    occupancy = Entity(
+        id="occ1",
+        caption="Occupancy",
+        schema="Occupancy",
+        properties={"holder": ["P1"], "post": [post], "status": ["current"]},
     )
-    shaped = shape_entity(entity)
-    vocab = type_values("country")
-    assert shaped["countries"] == {"ru": vocab["ru"], "de": vocab["de"]}
-    # the raw codes stay in properties — they're the filter inputs
-    assert shaped["properties"]["nationality"] == ["ru"]
+    rec = shape(occupancy, source_id="P1")
+    assert rec["properties"]["post"][0]["properties"]["country"] == ["ru"]
+    assert collect_codes(rec).values["country"] == {"ru"}
 
 
-def test_shape_entity_country_glossary_only_from_country_typed_props() -> None:
-    # "de" here is a registration number that happens to look like a code
-    entity = Entity(
-        id="Q1", caption="x", schema="Company", properties={"registrationNumber": ["de"]}
+def test_shape_stub_omits_empty_properties_and_entity_refs() -> None:
+    ownership = Entity(
+        id="o1", caption="Ownership", schema="Ownership", properties={"owner": ["P1"]}
     )
-    assert "countries" not in shape_entity(entity)
+    assert "properties" not in shape(ownership, "stub")
 
 
-def test_shape_entity_keeps_program_id() -> None:
-    entity = Entity(id="Q1", caption="x", schema="Person", properties={"programId": ["US-RUSHAR"]})
-    assert shape_entity(entity)["properties"]["programId"] == ["US-RUSHAR"]
-
-
-def test_shape_entity_honours_custom_property_selection() -> None:
-    entity = Entity(
-        id="Q1",
-        caption="x",
-        schema="Person",
-        properties={"name": ["x"], "gender": ["male"]},
-    )
-    props = shape_entity(entity, properties=("gender",))["properties"]
-    assert props == {"gender": ["male"]}
-
-
-def test_shape_scored_adds_score_match_and_explanation() -> None:
+def test_shape_scored_carries_explanation_evidence() -> None:
     scored = ScoredEntity(
         id="Q1",
-        caption="Jane",
+        caption="Abdul El-Sayed",
         schema="Person",
-        properties={"name": ["Jane"]},
-        datasets=["x"],
-        score=0.93,
+        properties={"name": ["Abdul El-Sayed"]},
+        score=0.75,
         match=True,
-        explanations={"name": FeatureResult(score=0.8)},
+        explanations={
+            "name_literal_match": FeatureResult(score=0.9, detail="exact name match"),
+            "dob_day_disjoint": FeatureResult(
+                score=-0.15, detail="birth day mismatch", query="1984-01-05", candidate="1984-10-31"
+            ),
+        },
     )
     shaped = shape_scored(scored)
-    assert shaped["score"] == 0.93
-    assert shaped["match"] is True
-    assert shaped["explanation"] == {"name": 0.8}
-    # still carries the trimmed entity view
-    assert shaped["id"] == "Q1"
-    assert shaped["properties"]["name"] == ["Jane"]
+    assert (shaped["score"], shaped["match"]) == (0.75, True)
+    assert shaped["explanation"] == {
+        "name_literal_match": {"score": 0.9, "detail": "exact name match"},
+        "dob_day_disjoint": {
+            "score": -0.15,
+            "detail": "birth day mismatch",
+            "query": "1984-01-05",
+            "candidate": "1984-10-31",
+        },
+    }
 
 
-def test_shape_scored_caps_and_ranks_explanations() -> None:
+def test_shape_scored_caps_positives_but_keeps_every_negative() -> None:
     scored = ScoredEntity(
         id="Q1",
         caption="x",
@@ -174,139 +218,234 @@ def test_shape_scored_caps_and_ranks_explanations() -> None:
             "b": FeatureResult(score=0.9),
             "c": FeatureResult(score=0.5),
             "d": FeatureResult(score=0.7),
+            "pen1": FeatureResult(score=-0.05),
+            "pen2": FeatureResult(score=-0.95),
+            "zero": FeatureResult(score=0.0),
         },
     )
     explanation = shape_scored(scored)["explanation"]
-    # top 3 by magnitude, highest first; the 0.1 feature is dropped
-    assert list(explanation) == ["b", "d", "c"]
-    assert "a" not in explanation
+    # top 3 positives plus both penalties, ranked by |score|; zero and the weakest positive dropped
+    assert list(explanation) == ["pen2", "b", "d", "c", "pen1"]
 
 
-def test_shape_scored_drops_zero_and_ranks_by_magnitude() -> None:
-    scored = ScoredEntity(
-        id="Q1",
-        caption="x",
-        schema="Person",
-        score=0.4,
-        match=False,
-        explanations={
-            "name_match": FeatureResult(score=0.6),
-            "dob_disjoint": FeatureResult(score=-0.95),  # strong penalty
-            "not_applicable": FeatureResult(score=0.0),  # no signal
-        },
+def test_shape_relation_edge_refs_the_far_end() -> None:
+    asset = Entity(
+        id="c1",
+        caption="ACME Ltd",
+        schema="Company",
+        datasets=["ru_egrul"],
+        properties={"topics": ["sanction"], "jurisdiction": ["cy"], "address": ["Nicosia"]},
     )
-    explanation = shape_scored(scored)["explanation"]
-    assert "not_applicable" not in explanation  # zero dropped
-    assert list(explanation) == ["dob_disjoint", "name_match"]  # ranked by |score|
-    assert explanation["dob_disjoint"] == -0.95  # negative preserved
-
-
-def test_shape_edge_drops_backref_stubs_counterparty_keeps_attrs() -> None:
-    asset = Entity(id="c1", caption="ACME Ltd", schema="Company")
-    edge = Entity(
-        id="own1",
-        caption="Ownership",  # useless caption — why we don't stub edges
-        schema="Ownership",
-        datasets=["ext_ru_egrul"],
-        properties={
-            "owner": ["P1"],  # back-ref to the source
-            "asset": [asset],  # counterparty
-            "percentage": ["100"],
-            "startDate": ["2019-01-01"],
-        },
-    )
-    rec = shape_edge(edge, "P1")
-    assert rec["id"] == "own1"
-    assert rec["schema"] == "Ownership"
-    assert rec["datasets"] == ["ext_ru_egrul"]  # provenance kept
-    assert "owner" not in rec["properties"]  # back-ref dropped
-    assert rec["properties"]["asset"] == [{"id": "c1", "caption": "ACME Ltd", "schema": "Company"}]
-    assert rec["properties"]["percentage"] == ["100"]  # attrs kept as lists
-
-
-def test_shape_edge_keeps_prose() -> None:
-    edge = Entity(
-        id="s1",
-        caption="Sanction",
-        schema="Sanction",
-        properties={"entity": ["P1"], "reason": ["sanctioned because X"], "authority": ["OFAC"]},
-    )
-    rec = shape_edge(edge, "P1")
-    assert "entity" not in rec["properties"]  # back-ref dropped
-    assert rec["properties"]["reason"] == ["sanctioned because X"]  # prose kept
-    assert rec["properties"]["authority"] == ["OFAC"]
-
-
-def test_shape_adjacency_keys_by_edge_type_with_counts() -> None:
-    src = Entity(id="P1", caption="Jane", schema="Person")
-    asset = Entity(id="c1", caption="ACME", schema="Company")
     edge = Entity(
         id="own1",
         caption="Ownership",
         schema="Ownership",
-        properties={"owner": ["P1"], "asset": [asset]},
+        datasets=["ext_ru_egrul"],
+        properties={"owner": ["P1"], "asset": [asset], "percentage": ["100"]},
+        first_seen=datetime(2026, 10, 13),
     )
-    resp = AdjacentResponse(
-        entity=src,
-        adjacent={
-            "ownershipOwner": AdjacentPropertyResponse(
-                results=[edge], total=TotalSpec(value=29, relation="eq"), limit=50, offset=0
-            )
+    out = shape_relation_page(_page([edge, "unresolved-id"], total=2), "P1", "ownershipOwner")
+    rec = out["results"][0]
+    assert rec["datasets"] == ["ext_ru_egrul"]
+    assert rec["caption"] == "Ownership"
+    assert "first_seen" not in rec  # dates only on the top-level record
+    assert "owner" not in rec["properties"]
+    assert rec["properties"]["percentage"] == ["100"]
+    assert rec["properties"]["asset"] == [
+        {
+            "id": "c1",
+            "caption": "ACME Ltd",
+            "schema": "Company",
+            "topics": {"sanction": type_values("topic")["sanction"]},
+            "property_count": 2,
+            "value_count": 2,
+            "dataset_count": 1,
+            "abridged": 'fetch_entity_by_id(entity_id="c1")',
+        }
+    ]
+    assert "abridged" not in rec  # the edge itself is shown in full
+    assert out["results"][1] == {"id": "unresolved-id"}
+
+
+def test_shape_relation_page_keeps_position_post_stubs() -> None:
+    post = Entity(
+        id="pos1",
+        caption="Member of the State Duma",
+        schema="Position",
+        properties={"name": ["Member of the State Duma"], "country": ["ru"]},
+    )
+    occupancy = Entity(
+        id="occ1",
+        caption="Occupancy",
+        schema="Occupancy",
+        properties={"holder": ["P1"], "post": [post], "startDate": ["2016"]},
+        first_seen=datetime(2024, 1, 1),
+    )
+    out = shape_relation_page(_page([occupancy], total=1), "P1", "positionOccupancies")
+    row = out["results"][0]
+    post_stub = row["properties"]["post"][0]
+    assert post_stub["properties"] == {"country": ["ru"]}
+    assert "property_count" not in post_stub  # a stub, not a ref: the post is part of the edge
+    assert row["properties"]["startDate"] == ["2016"]
+    assert "first_seen" not in row
+
+
+def test_shape_relation_page_drops_designation_captions() -> None:
+    sanction = _sanction("s1", program=["Reciprocal"], authority=["OFAC"])
+    sanction.caption = "Reciprocal"
+    sanction.first_seen = datetime(2024, 1, 1)
+    row = shape_relation_page(_page([sanction], total=1), "P1", "sanctions")["results"][0]
+    assert "caption" not in row
+    assert "first_seen" not in row
+    assert row["properties"] == {"program": ["Reciprocal"], "authority": ["OFAC"]}
+
+
+def test_only_refs_and_stubs_are_marked_abridged() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person", properties={"name": ["Jane"]})
+    assert shape(entity, "ref")["abridged"] == 'fetch_entity_by_id(entity_id="P1")'
+    assert shape(entity, "stub")["abridged"] == 'fetch_entity_by_id(entity_id="P1")'
+    assert "abridged" not in shape(entity)
+
+
+def test_top_level_records_keep_their_dates() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person", first_seen=datetime(2022, 3, 1))
+    profile = shape_profile(entity, AdjacentResponse(entity=entity, adjacent={}))
+    assert profile["first_seen"] == "2022-03-01"
+
+
+def test_match_candidate_is_a_ref_with_counts_and_evidence() -> None:
+    scored = ScoredEntity(
+        id="Q1",
+        caption="Jane Doe",
+        schema="Person",
+        datasets=["us_ofac_sdn"],
+        properties={
+            "name": ["Jane Doe"],
+            "birthDate": ["1975-01-01"],
+            "alias": ["J. Doe"],
+            "passportNumber": ["X123"],
         },
+        score=0.9,
+        match=True,
+        first_seen=datetime(2023, 1, 1),
     )
-    out = shape_adjacency(resp)
-    assert set(out) == {"ownershipOwner"}
-    block = out["ownershipOwner"]
-    assert (block["total"], block["limit"], block["offset"]) == (29, 50, 0)
-    assert block["results"][0]["properties"]["asset"][0]["caption"] == "ACME"
+    shaped = shape_scored(scored)
+    assert shaped["abridged"] == 'fetch_entity_by_id(entity_id="Q1")'
+    assert shaped["property_count"] == 4
+    assert shaped["value_count"] == 4
+    assert shaped["dataset_count"] == 1
+    assert "properties" not in shaped and "datasets" not in shaped
+    assert "first_seen" not in shaped
+    assert shaped["score"] == 0.9 and shaped["match"] is True
 
 
-def test_shape_adjacency_drops_riskSource_phantom_edge() -> None:
-    src = Entity(id="P1", caption="Jane", schema="Person")
+def test_page_marks_truncation() -> None:
+    rows = [{"id": str(i)} for i in range(5)]
+    assert page(rows, _total(29), 0, "more", q="x", limit=None) == {
+        "total": 29,
+        "returned": 5,
+        "next": 'more(q="x", offset=5)',
+        "results": rows,
+    }
+    assert page(rows[:4], _total(29), 25, "more")["next"] is None
+    assert page([], _total(0), 0, "more")["next"] is None
+
+
+def test_shape_adjacency_keys_by_edge_type_and_drops_riskSource() -> None:
     resp = AdjacentResponse(
-        entity=src,
+        entity=Entity(id="P1", caption="Jane", schema="Person"),
         adjacent={
-            "ownershipOwner": AdjacentPropertyResponse(
-                results=[], total=TotalSpec(value=2, relation="eq"), limit=50, offset=0
-            ),
+            "ownershipOwner": _page([], total=2),
             # Reports a count but resolves no entities — must be suppressed.
-            "riskSource": AdjacentPropertyResponse(
-                results=[], total=TotalSpec(value=33, relation="eq"), limit=50, offset=0
-            ),
+            "riskSource": _page([], total=33),
         },
     )
     out = shape_adjacency(resp)
     assert set(out) == {"ownershipOwner"}
+    assert out["ownershipOwner"]["total"] == 2
 
 
-def test_shape_full_record_keeps_dump_and_adds_glossaries() -> None:
+def test_shape_profile_inlines_sanctions_and_summarises_relations() -> None:
+    entity = Entity(
+        id="P1",
+        caption="Jane",
+        schema="Person",
+        properties={"name": ["Jane"], "notes": ["bio"]},
+        referents=["ofac-1"],
+    )
+    adjacency = AdjacentResponse(
+        entity=entity,
+        adjacent={
+            "sanctions": _page([_sanction("s1")], total=1),
+            "familyPerson": _page([], total=4),
+        },
+    )
+    profile = shape_profile(entity, adjacency)
+    assert "notes" not in profile["properties"]
+    assert "referents" not in profile
+    assert profile["sanctions"]["results"][0]["id"] == "s1"
+    assert set(profile["relations"]) == {"familyPerson"}
+
+
+def test_shape_profile_previews_sections_and_names_the_rest() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person")
+    adjacency = AdjacentResponse(
+        entity=entity, adjacent={"sanctions": _page([_sanction("s1")], total=2)}
+    )
+    profile = shape_profile(entity, adjacency)
+    assert [s["id"] for s in profile["sanctions"]["results"]] == ["s1"]
+    assert profile["sanctions"]["next"] == (
+        'fetch_entity_relations(entity_id="P1", prop="sanctions", offset=1)'
+    )
+    assert "relations" not in profile
+
+
+def test_shape_profile_lifts_risks_and_positions_beside_sanctions() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person")
+    risk = Entity(
+        id="r1",
+        caption="Risk",
+        schema="Risk",
+        properties={
+            "entity": ["P1"],
+            "topics": ["poi"],
+            "reason": ["named in an oligarch list"],
+            "status": ["active"],
+        },
+    )
+    occupancy = Entity(
+        id="occ1", caption="Occupancy", schema="Occupancy", properties={"holder": ["P1"]}
+    )
+    adjacency = AdjacentResponse(
+        entity=entity,
+        adjacent={
+            "risks": _page([risk], total=1),
+            "positionOccupancies": _page([occupancy], total=1),
+            "familyPerson": _page([], total=1),
+        },
+    )
+    profile = shape_profile(entity, adjacency)
+    assert "sanctions" not in profile  # only sections the entity has
+    rec = profile["risks"]["results"][0]
+    assert rec["topics"] == {"poi": type_values("topic")["poi"]}
+    assert rec["properties"] == {"status": ["active"]}
+    assert profile["narrative_text"] == 'fetch_entity_descriptions(entity_id="P1")'
+    assert profile["positionOccupancies"]["results"][0]["id"] == "occ1"
+    assert set(profile["relations"]) == {"familyPerson"}
+
+
+def test_shape_raw_keeps_dump_and_adds_topic_labels() -> None:
     entity = Entity(
         id="Q1",
         caption="Jane Doe",
         schema="Person",
-        properties={
-            "name": ["Jane Doe"],
-            "notes": ["kept — no trimming in the detail view"],
-            "topics": ["sanction"],
-            "birthCountry": ["ru"],  # country-typed but outside KEY_PROPERTIES
-        },
+        properties={"notes": ["kept"], "topics": ["sanction"]},
         referents=["ofac-1234"],
     )
-    record = shape_full_record(entity)
-    # untrimmed dump: properties and referents survive
-    assert record["properties"]["notes"] == ["kept — no trimming in the detail view"]
-    assert record["properties"]["topics"] == ["sanction"]
+    record = shape_raw(entity)
+    assert record["properties"]["notes"] == ["kept"]
     assert record["referents"] == ["ofac-1234"]
-    # inline glossaries ride along at the top level
     assert record["topics"] == {"sanction": type_values("topic")["sanction"]}
-    assert record["countries"] == {"ru": type_values("country")["ru"]}
-
-
-def test_shape_full_record_omits_empty_glossaries() -> None:
-    entity = Entity(id="Q1", caption="x", schema="Person", properties={"name": ["x"]})
-    record = shape_full_record(entity)
-    assert "topics" not in record
-    assert "countries" not in record
 
 
 def test_shape_statements_projects_provenance_rows() -> None:
@@ -341,98 +480,180 @@ def test_shape_statements_projects_provenance_rows() -> None:
                 last_seen=datetime(2026, 1, 1),
             ),
         ],
-        total=TotalSpec(value=2, relation="eq"),
+        total=_total(2),
         limit=50,
         offset=0,
     )
-    out = shape_statements(resp)
-    assert (out["total"], out["limit"], out["offset"]) == (2, 50, 0)
-    first = out["results"][0]
-    assert first == {
+    out = shape_statements(resp, entity_id="Q7747")
+    assert (out["total"], out["returned"], out["next"]) == (2, 2, None)
+    assert out["results"][0] == {
         "prop": "alias",
         "value": "A. Zakharov",
         "dataset": "us_ofac_sdn",
         "entity_id": "ofac-45937",
         "first_seen": "2023-07-19",
+        "last_seen": "2026-03-25",
         "lang": "eng",
         "original_value": "ZAKHAROV, A.",
         "origin": "patch",
     }
     second = out["results"][1]
     assert "canonical_id" not in second  # per-row canonical dropped (it's the query)
-    assert "last_seen" not in second  # recency is noise for provenance
     assert "original_value" not in second  # same as value → omitted
     assert "lang" not in second
     assert "origin" not in second  # unset for plain crawled data
 
 
-def test_title_glossary_keeps_known_sorted_dedupes() -> None:
-    titles = {"us_ofac_sdn": "OFAC SDN", "eu_fsf": "EU Sanctions"}
-    out = title_glossary(["us_ofac_sdn", "eu_fsf", "us_ofac_sdn", "no_such"], titles)
-    assert out == {"eu_fsf": "EU Sanctions", "us_ofac_sdn": "OFAC SDN"}
-    assert list(out) == ["eu_fsf", "us_ofac_sdn"]  # sorted
+def test_shape_profile_points_to_narrative_text() -> None:
+    noted = Entity(id="P1", caption="Jane", schema="Person", properties={"notes": ["a"]})
+    profile = shape_profile(noted, AdjacentResponse(entity=noted, adjacent={}))
+    assert profile["narrative_text"] == 'fetch_entity_descriptions(entity_id="P1")'
+    # designation reasons count too, though the record itself has no prose
+    listed = Entity(id="P2", caption="x", schema="Person")
+    adjacency = AdjacentResponse(entity=listed, adjacent={"sanctions": _page([], total=4)})
+    assert "narrative_text" in shape_profile(listed, adjacency)
+    bare = Entity(id="P3", caption="x", schema="Person")
+    assert "narrative_text" not in shape_profile(bare, AdjacentResponse(entity=bare, adjacent={}))
 
 
-def test_title_glossary_empty_titles_yields_empty_legend() -> None:
-    # failure-soft: a failed titles lookup degrades to an empty legend
-    assert title_glossary(["us_ofac_sdn"], {}) == {}
+def _statement(prop: str, value: str, dataset: str, *, lang: str | None = None) -> Statement:
+    return Statement(
+        id=f"{dataset}-{prop}-{value}",
+        entity_id=f"{dataset}-src",
+        canonical_id="P1",
+        prop=prop,
+        prop_type="text",
+        schema="Person",
+        value=value,
+        dataset=dataset,
+        lang=lang,
+        first_seen=datetime(2024, 1, 1),
+        last_seen=datetime(2026, 1, 1),
+    )
 
 
-def test_program_index_projects_compact_fields() -> None:
-    programs = [
-        Program(
-            key="US-RUSHAR",
-            title="Russian Harmful Foreign Activities Sanctions",
-            summary="dropped from the index projection",
-            issuer=ProgramIssuer(name="OFAC", territory="us"),
-        ),
-        Program(key="EU-UKR"),
+def test_text_entries_order_reasons_first_then_official_sources() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person")
+    sanction = _sanction(
+        "s1", reason=["Close to the regime."], authority=["Council"], program=["EU-UKR"]
+    )
+    sanction.datasets = ["eu_fsf"]
+    sanction.first_seen = datetime(2014, 3, 17)
+    risk = Entity(
+        id="r1",
+        caption="Risk",
+        schema="Risk",
+        properties={"entity": ["P1"], "reason": ["On a list."]},
+    )
+    risk.datasets = ["wd_oligarchs"]
+    statements = [
+        _statement("notes", "From an NGO.", "ir_uani_business_registry"),
+        _statement("notes", "From OFAC.", "us_ofac_sdn"),
     ]
-    out = program_index(programs)
-    assert out[0] == {
-        "key": "US-RUSHAR",
-        "title": "Russian Harmful Foreign Activities Sanctions",
-        "territory": "us",
+    entries = text_entries(
+        entity,
+        statements,
+        {"sanctions": [sanction], "risks": [risk]},
+        unofficial={"ir_uani_business_registry", "wd_oligarchs"},
+    )
+    assert [e["text"] for e in entries] == [
+        "Close to the regime.",
+        "On a list.",
+        "From OFAC.",
+        "From an NGO.",
+    ]
+    reason = entries[0]
+    assert reason["prop"] == "reason"
+    assert reason["sources"] == [{"dataset": "eu_fsf", "first_seen": "2014-03-17"}]
+    assert reason["records"][0]["id"] == "s1"
+    assert reason["records"][0]["properties"]["authority"] == ["Council"]
+    assert reason["records"][0]["properties"]["program"] == ["EU-UKR"]
+
+
+def test_text_entries_put_a_designation_reason_before_its_other_prose() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person")
+    sanction = _sanction("s1", summary=["Instrument of designation."], reason=["The reason."])
+    sanction.datasets = ["au_dfat_sanctions"]
+    entries = text_entries(entity, [], {"sanctions": [sanction]}, unofficial=set())
+    assert [e["prop"] for e in entries] == ["reason", "summary"]
+
+
+def test_text_entries_group_identical_texts_and_keep_translations_apart() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person")
+    statements = [
+        _statement("notes", "Same text.", "gb_fcdo_sanctions", lang="eng"),
+        _statement("notes", "Same text.", "ch_seco_sanctions", lang="eng"),
+        _statement("notes", "Même texte.", "fr_tresor_gels_avoir", lang="fra"),
+    ]
+    entries = text_entries(entity, statements, {}, unofficial=set())
+    assert len(entries) == 2
+    same = next(e for e in entries if e["text"] == "Same text.")
+    assert [s["dataset"] for s in same["sources"]] == ["ch_seco_sanctions", "gb_fcdo_sanctions"]
+    assert next(e for e in entries if e["text"] == "Même texte.")["lang"] == "fra"
+
+
+def test_text_entries_fall_back_to_the_record_without_credits() -> None:
+    entity = Entity(id="P1", caption="Jane", schema="Person", properties={"notes": ["A note."]})
+    entries = text_entries(entity, None, {}, unofficial=set())
+    assert entries == [{"prop": "notes", "text": "A note.", "sources": []}]
+
+
+def test_page_entries_respects_budget_and_marks_the_end() -> None:
+    entries = [{"prop": "notes", "text": "x" * 100, "sources": []} for _ in range(5)]
+
+    first = page_entries(entries, 0, 300, "more")
+    assert (first["returned"], first["next"]) == (2, "more(offset=2)")
+    last = page_entries(entries, 4, 300, "more")
+    assert (last["returned"], last["next"]) == (1, None)
+    huge = page_entries([{"prop": "notes", "text": "x" * 1000, "sources": []}], 0, 10, "more")
+    assert huge["returned"] == 1  # an oversized entry still fills a page
+
+
+def test_unknown_name_suggests_entries_containing_the_query() -> None:
+    titles = {
+        "us_ofac_sdn": "OFAC Specially Designated Nationals",
+        "us_ofac_cons": "OFAC Consolidated List",
+        "eu_fsf": "EU Financial Sanctions Files",
     }
-    assert out[1] == {"key": "EU-UKR", "title": None, "territory": None}
+    message = unknown_name("dataset", "ofac", titles)
+    assert message.startswith("Unknown dataset 'ofac'. Closest: ")
+    assert "us_ofac_sdn (OFAC Specially Designated Nationals)" in message
+    assert "us_ofac_cons" in message
+    assert "eu_fsf" not in message
 
 
-def test_dataset_index_projects_compact_fields() -> None:
-    resp = DatasetsResponse(
-        datasets=[
-            Dataset(
-                name="us_ofac_sdn",
-                title="OFAC Specially Designated Nationals",
-                tags=["list.sanction"],
-                entity_count=12000,
-                summary="dropped from the index projection",
-            ),
-            Dataset(name="default", title="All datasets"),
-        ]
+def test_unknown_name_falls_back_to_fuzzy_matches() -> None:
+    message = unknown_name("program", "US-RUSHARM", {"US-RUSHAR": None, "EU-UKR": "Ukraine"})
+    assert message == "Unknown program 'US-RUSHARM'. Closest: US-RUSHAR."
+    assert unknown_name("program", "zzz", {"EU-UKR": "Ukraine"}).endswith("nothing close to it.")
+
+
+def test_ref_counts_only_what_a_summary_would_show() -> None:
+    entity = Entity(
+        id="P1",
+        caption="Jane Doe",
+        schema="Person",
+        datasets=["a", "b"],
+        properties={
+            "name": ["Jane Doe", "J. Doe"],
+            "birthDate": ["1970"],
+            "topics": ["sanction"],  # inline, not counted
+            "notes": ["prose is served elsewhere"],
+        },
     )
-    out = dataset_index(resp)
-    assert out[0] == {
-        "name": "us_ofac_sdn",
-        "title": "OFAC Specially Designated Nationals",
-        "tags": ["list.sanction"],
-        "entity_count": 12000,
-    }
-    assert out[1]["name"] == "default"
-    assert out[1]["tags"] == []
-    assert out[1]["entity_count"] is None
+    ref = shape(entity, "ref")
+    assert (ref["property_count"], ref["value_count"], ref["dataset_count"]) == (2, 3, 2)
 
 
-def test_shape_adjacency_property_shapes_results() -> None:
-    edge = Entity(
-        id="s1",
-        caption="Sanction",
-        schema="Sanction",
-        properties={"entity": ["P1"], "authority": ["OFAC"]},
+def test_tool_call_spells_out_set_arguments_as_json() -> None:
+    call = tool_call("search_entities", q="Gazprom", schema=None, topics=["sanction"], offset=10)
+    assert call == 'search_entities(q="Gazprom", topics=["sanction"], offset=10)'
+
+
+def test_tool_call_takes_any_argument_name() -> None:
+    assert tool_call("describe", kind="dataset", name="us_ofac_sdn") == (
+        'describe(kind="dataset", name="us_ofac_sdn")'
     )
-    block = AdjacentPropertyResponse(
-        results=[edge], total=TotalSpec(value=21, relation="eq"), limit=50, offset=0
-    )
-    out = shape_adjacency_property(block, "P1")
-    assert out["total"] == 21
-    assert out["results"][0]["properties"]["authority"] == ["OFAC"]
-    assert "entity" not in out["results"][0]["properties"]
+    rows = [{"id": "x"}]
+    out = page(rows, _total(2), 0, "more", tool="t", results="r", total=1)
+    assert out["next"] == 'more(tool="t", results="r", total=1, offset=1)'

@@ -5,6 +5,7 @@ classes either as ``from yente_client import Person, Company`` or
 ``from yente_client.entities import Person, Company``.
 """
 
+from yente_client._http import VERSION as __version__
 from yente_client.async_client import AsyncClient
 from yente_client.client import BEST_ALGORITHM, PROGRAMS_URL, Client
 
@@ -36,6 +37,7 @@ from yente_client.models import (
     Dataset,
     DatasetsResponse,
     Entity,
+    FeatureDoc,
     FeatureResult,
     MatchError,
     MatchResponse,
@@ -53,6 +55,7 @@ from yente_client.models import (
 )
 
 __all__ = [
+    "__version__",
     # Constants
     "BEST_ALGORITHM",
     "PROGRAMS_URL",
@@ -76,6 +79,7 @@ __all__ = [
     "DataCoverage",
     "DataPublisher",
     "Entity",
+    "FeatureDoc",
     "FeatureResult",
     "MatchError",
     "MatchResponse",
