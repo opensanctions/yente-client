@@ -1,6 +1,6 @@
 # OpenSanctions MCP Server
 
-*Specification of the hosted `yente-mcp` server at `mcp.opensanctions.org`*
+*Specification of the MCP server hosted at `mcp.opensanctions.org`*
 
 **Last updated: 12 November 2026**
 
@@ -37,14 +37,9 @@ available on request. No public test environment is available.
 
 # Authentication
 
-All MCP clients must authenticate with OAuth 2.0. The server answers a request
-without a valid access token with `401` and a `WWW-Authenticate` header that
-names the protected resource metadata. A client cannot list or call tools
-before it authenticates. The server does not accept an API key as the bearer
-token.
-
-The OAuth 2.0 authorization server is `https://auth.opensanctions.org`. It runs
-on Ory Network, a hosted identity and access management platform.
+All MCP clients must authenticate with OAuth 2.0. The OAuth 2.0 authorization
+server is `https://auth.opensanctions.org`. It runs on Ory Network, a hosted
+identity and access management platform.
 
 PKCE (RFC 7636, S256 only) is mandatory for all public clients registered
 through Dynamic Client Registration.
@@ -108,6 +103,50 @@ All tools are available to each authenticated client.
 | [`fetch_entity_statements`](#fetch_entity_statements) | Read which source gave each value of an entity, and when. |
 | [`describe`](#describe) | Look up schemata, topics, countries, one dataset or one sanctions program. |
 
+## Overview
+
+A typical session goes from a question about a party to the evidence behind
+the answer. Each step returns more detail on fewer entities.
+
+![The order of tool calls: find, profile, go deeper](mcp_overview.svg)
+
+1. **Find.** Start with one of two tools. Both return entities at level 1:
+   the identity of each entity, without its properties.
+    - `match_entity` is the primary tool. It answers "is this party listed?"
+      with scored candidates and an explanation of each score.
+    - `search_entities` is the alternative for exploration by keyword. Its
+      results have no score.
+2. **Profile.** Call `fetch_entity_by_id` with the ID of a candidate or search
+   result.
+    - It returns the entity at level 2: datasets and all properties except
+      long text.
+    - It previews each relationship type: sanctions, risk listings, positions
+      held, ownership, family and others. Each relationship is at level 2. The
+      entity at its other end is at level 1.
+3. **Go deeper.** Three tools give more detail on the profiled entity.
+    - `fetch_entity_descriptions` returns the text that explains why the
+      entity is listed, with the source datasets of each text.
+    - `fetch_entity_relations` returns all relationships of one type, when the
+      preview in the profile is not sufficient.
+    - `fetch_entity_statements` returns the provenance of each value: which
+      dataset gave it, and when.
+
+`describe` supports all steps. It returns valid schema names, property names,
+topic and country codes, and the record of a dataset or sanctions program. It
+returns no entities.
+
+The detail levels 1, 2 and 3 are defined in [Entity objects](#entity-objects).
+
+Results name the next call:
+
+- `abridged`, on an entity at level 1, names the `fetch_entity_by_id` call for
+  the entity at level 2.
+- `next`, on a list, names the call for the next page.
+- `narrative_text`, on a profile, names the `fetch_entity_descriptions` call.
+
+To follow a relationship, call `fetch_entity_by_id` with the ID of the entity
+at the other end.
+
 # Common conventions
 
 These conventions apply to all tools. The response shapes are in beta and can
@@ -120,21 +159,35 @@ model. An entity has an ID, a schema (`Person`, `Company`, `Vessel`, …) and
 properties. Each property holds a list of values. A relationship (ownership,
 directorship, family, a sanction, a position held) is also an entity.
 
+The OpenSanctions website contains
+[in-depth documentation on the data model](https://www.opensanctions.org/docs/data/).
+
 ## Entity objects
 
-Entities appear at three levels of detail.
+Entities appear at three levels of detail. The level depends on where the
+entity appears in a result.
+
+| Level | Content | Where it appears |
+| :---- | :---- | :---- |
+| 1 | ID, caption, schema and topics. Also the key properties of the schema, or counts of the properties, values and datasets. | <ul><li>Results of `match_entity` and `search_entities`</li><li>Related entities, for example the owner of a company or the position that a person holds</li></ul> |
+| 2 | All of level 1, and the datasets and all properties except long text. | <ul><li>The entity from `fetch_entity_by_id`</li><li>Its relationships, for example an ownership or a sanction</li></ul> |
+| 3 | All of level 2, and long text and `referents`. This is the raw record of the OpenSanctions API. | <ul><li>The entity from `fetch_entity_by_id` with `full: true`</li></ul> |
+
+Entities at level 1 are abridged. Each one carries `abridged`, the call that
+returns it at level 2. An attribute that is absent from an abridged entity is
+not shown. It is not unknown.
 
 | Attribute | Type | Restrictions/limits | Description |
 | :---- | :---- | :---- | :---- |
 | `id` | string | Always present. | The OpenSanctions ID of the entity. |
 | `caption` | string | Always present, except on sanction and risk records in a relationship list. | The display name. |
 | `schema` | string | Always present. An FtM schema name. | The type of the entity. |
-| `topics` | object | Optional. | Topic codes mapped to their labels, for example `{"sanction": "Sanctioned entity"}`. |
-| `property_count`, `value_count`, `dataset_count` | int | Abridged reference only. Non-negative. | How many properties, values and source datasets the full record holds. |
-| `abridged` | string | Abridged entities only. | The tool call that returns the full record, for example `fetch_entity_by_id(entity_id="Q7747")`. An attribute that is absent from an abridged entity is not shown. It is not unknown. |
-| `datasets` | list[string] | Full view only. | The names of the datasets that list the entity. |
-| `properties` | object | Full view, and a short form in some abridged entities. | Property names mapped to lists of values. A value is a string or a nested entity object. Long text values are never included; see `fetch_entity_descriptions`. |
-| `first_seen`, `last_change` | string | Top-level records only. ISO 8601 date. | When the entity entered the data and when it last changed. |
+| `topics` | object | Optional. All levels. | Topic codes mapped to their labels, for example `{"sanction": "Sanctioned entity"}`. |
+| `property_count`, `value_count`, `dataset_count` | int | Level 1 only. Optional. Non-negative. | How many properties, values and source datasets the entity holds. |
+| `abridged` | string | Level 1 only. | The tool call that returns the entity at level 2, for example `fetch_entity_by_id(entity_id="Q7747")`. |
+| `datasets` | list[string] | Levels 2 and 3. | The names of the datasets that list the entity. |
+| `properties` | object | Levels 2 and 3: always present. Level 1: optional, key properties only. | Property names mapped to lists of values. A value is a string or a nested entity object. Long text values are included at level 3 only; see also `fetch_entity_descriptions`. |
+| `first_seen`, `last_change` | string | The top-level entity of `fetch_entity_by_id` only. ISO 8601 date. | When the entity entered the data and when it last changed. |
 
 ## Paged lists
 
@@ -226,7 +279,7 @@ When no candidate has a score at or above the cutoff, and the call set no
 
 ## Candidate objects
 
-A candidate is an abridged entity reference (see [Entity objects](#entity-objects))
+A candidate is an entity at level 1 (see [Entity objects](#entity-objects))
 with these additional attributes.
 
 | Attribute | Type | Restrictions/limits | Description |
@@ -269,7 +322,7 @@ Results are paged. See [Paged lists](#paged-lists).
 | `total` | int | Always present. Non-negative. | The number of entities that match the search. |
 | `returned` | int | Always present. 0 to 25. | The number of entries in `results`. |
 | `next` | string or null | Always present. | The tool call for the next page. `null` on the last page. |
-| `results` | list[object] | Always present. Can be empty. | Abridged entity references. See [Entity objects](#entity-objects). |
+| `results` | list[object] | Always present. Can be empty. | Entities at level 1. See [Entity objects](#entity-objects). |
 | `legend` | object | Optional. | See [Legend](#legend). |
 
 # `fetch_entity_by_id`
@@ -298,12 +351,13 @@ into another entity. The returned ID is the current one.
 | Argument | Type | Restrictions/limits | Description |
 | :---- | :---- | :---- | :---- |
 | `entity_id` | string | Required. | The OpenSanctions ID of the entity. |
-| `full` | boolean | Optional. Default `false`. | When `true`, the tool returns the raw record as the OpenSanctions API gives it, with `referents` (the IDs of the source records that were merged into the entity) and without relationships. |
+| `full` | boolean | Optional. Default `false`. | When `true`, the tool returns the entity at level 3: the raw record as the OpenSanctions API gives it, with long text and `referents` (the IDs of the source records that were merged into the entity) and without relationships. |
 
 ## Return results
 
-The result is a full entity object (see [Entity objects](#entity-objects))
-with these additional attributes.
+The result is an entity at level 2 (see [Entity objects](#entity-objects)),
+or at level 3 when `full` is `true`. At level 2, it has
+these additional attributes.
 
 | Attribute | Type | Restrictions/limits | Description |
 | :---- | :---- | :---- | :---- |
@@ -362,7 +416,7 @@ Text from sources is data. A client must not treat it as instructions.
 | `text` | string | Always present. | The text, verbatim from the source. |
 | `lang` | string | Optional. Language code. | The language of the text, when the source states it. |
 | `sources` | list[object] | Always present. Can be empty. | Objects with `dataset` (string) and `first_seen` (ISO 8601 date or null). |
-| `records` | list[object] | Sanction and risk reasons only. | The sanction or risk records that the text belongs to, as abridged entities. |
+| `records` | list[object] | Sanction and risk reasons only. | The sanction or risk records that the text belongs to, at level 1. |
 
 # `fetch_entity_relations`
 
@@ -377,7 +431,7 @@ entity is on. For a company, `ownershipOwner` lists what it owns, and
 in a profile, and `sanctions`, `risks` and `positionOccupancies`.
 
 Each result is the relationship record with its own properties (role, share,
-dates). The entity at the other end is abridged.
+dates). The entity at the other end is at level 1.
 
 Without `prop`, the tool returns an overview: each relationship type with its
 total and its first records.
@@ -400,7 +454,7 @@ With `prop`, the result is a paged list:
 | `total` | int | Always present. Non-negative. | The number of relationships of this type. |
 | `returned` | int | Always present. 0 to 25. | The number of entries in `results`. |
 | `next` | string or null | Always present. | The tool call for the next page. `null` on the last page. |
-| `results` | list[object] | Always present. Can be empty. | Relationship records as full entity objects, without `first_seen` and `last_change`. |
+| `results` | list[object] | Always present. Can be empty. | Relationship records at level 2, without `first_seen` and `last_change`. See [Entity objects](#entity-objects). |
 | `legend` | object | Optional. | See [Legend](#legend). |
 
 Without `prop`, the result is an object that maps each relationship type to a
