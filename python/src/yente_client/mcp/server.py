@@ -214,8 +214,8 @@ def _auth() -> RemoteAuthProvider | None:
 
 
 mcp: FastMCP = FastMCP(
-    # name and instructions default to "yente" / the stock copy, but a self-hosted
-    # deployment can rebrand both via $YENTE_MCP_NAME / $YENTE_MCP_INSTRUCTIONS.
+    # A self-hosted deployment rebrands via $YENTE_MCP_NAME, $YENTE_MCP_TITLE,
+    # $YENTE_MCP_DESCRIPTION and $YENTE_MCP_INSTRUCTIONS.
     name=env.mcp_name(),
     version=__version__,
     website_url="https://www.opensanctions.org",
@@ -233,6 +233,10 @@ mcp: FastMCP = FastMCP(
     # also means that _resolve_client() never falls back to the server's key.
     auth=_auth(),
 )
+# FastMCP takes no title or description, but the low-level server sends both
+# in the initialize response's serverInfo.
+mcp._mcp_server.title = env.mcp_title()
+mcp._mcp_server.description = env.mcp_description()
 
 
 class _TextOnly(Middleware):

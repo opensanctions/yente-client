@@ -10,7 +10,9 @@ from typing import Any
 
 import httpx
 import pytest
+from fastmcp import Client
 
+from yente_client import env
 from yente_client.async_client import AsyncClient
 from yente_client.mcp import server
 from yente_client.mcp._deps import ToolError
@@ -291,3 +293,10 @@ async def test_tool_without_any_key_sends_no_credentials(
 ) -> None:
     downstream = await call_tools(monkeypatch, [({}, *_FETCH)])
     assert "authorization" not in downstream[0].headers
+
+
+async def test_server_info_carries_title_and_description() -> None:
+    async with Client(server.mcp) as client:
+        info = client.server_info
+    assert info.title == env.mcp_title()
+    assert info.description == env.mcp_description()

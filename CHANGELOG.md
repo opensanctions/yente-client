@@ -28,6 +28,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `YENTE_MCP_PUBLIC_URL` set, the server serves the protected resource
   metadata, accepts only valid access tokens from the issuer, forwards them to
   the API, and answers all other requests with `401`.
+- **`yente-mcp` advertises a title and description** ("Yente" and a one-line
+  summary) for MCP clients to display. Override them with `YENTE_MCP_TITLE`
+  and `YENTE_MCP_DESCRIPTION`.
 - `py.typed` marker, which the `Typing :: Typed` classifier promises. Without
   it, mypy in downstream projects skips `yente_client`.
 
