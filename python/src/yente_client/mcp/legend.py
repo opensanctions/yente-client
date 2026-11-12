@@ -20,7 +20,7 @@ from typing import Any
 from yente_client import schemas
 from yente_client._util import compact
 from yente_client.mcp.shaping import PROFILE_SECTIONS
-from yente_client.models import AlgorithmsResponse, Dataset, DatasetsResponse, Program
+from yente_client.models import Algorithm, AlgorithmsResponse, Dataset, DatasetsResponse, Program
 from yente_client.schemas import (
     PropertySpec,
     all_property_specs,
@@ -200,16 +200,37 @@ def as_of(resp: DatasetsResponse, dataset: str) -> str | None:
 
 
 def feature_descriptions(resp: AlgorithmsResponse) -> dict[str, str]:
-    """Map the server-default algorithm's feature names to their descriptions.
+    """Map the server-default algorithm's feature names to their descriptions."""
+    algorithm = _default_algorithm(resp)
+    if algorithm is None:
+        return {}
+    return {name: doc.description for name, doc in algorithm.features.items() if doc.description}
+
+
+def feature_coefficients(resp: AlgorithmsResponse) -> dict[str, float]:
+    """Map the server-default algorithm's feature names to their signed weights.
+
+    Penalties carry negative coefficients; a feature's contribution to a
+    candidate's score is its unsigned score times this weight.
+    """
+    algorithm = _default_algorithm(resp)
+    if algorithm is None:
+        return {}
+    return {
+        name: doc.coefficient
+        for name, doc in algorithm.features.items()
+        if doc.coefficient is not None
+    }
+
+
+def _default_algorithm(resp: AlgorithmsResponse) -> Algorithm | None:
+    """Pick the server-default algorithm.
 
     ``default`` may name an alias (``"best"``) rather than an algorithm, so an
     unknown name falls back to the algorithm ``best`` points at.
     """
     by_name = {a.name: a for a in resp.algorithms}
-    algorithm = by_name.get(resp.default) or by_name.get(resp.best)
-    if algorithm is None:
-        return {}
-    return {name: doc.description for name, doc in algorithm.features.items() if doc.description}
+    return by_name.get(resp.default) or by_name.get(resp.best)
 
 
 def _walk(obj: Any, codes: LegendCodes) -> None:

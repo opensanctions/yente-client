@@ -184,21 +184,21 @@ def test_shape_scored_carries_explanation_evidence() -> None:
         caption="Abdul El-Sayed",
         schema="Person",
         properties={"name": ["Abdul El-Sayed"]},
-        score=0.75,
-        match=True,
+        score=0.65,
+        match=False,
         explanations={
-            "name_literal_match": FeatureResult(score=0.9, detail="exact name match"),
+            "name_match": FeatureResult(score=0.9, detail="exact name match"),
             "dob_day_disjoint": FeatureResult(
-                score=-0.15, detail="birth day mismatch", query="1984-01-05", candidate="1984-10-31"
+                score=1.0, detail="birth day mismatch", query="1984-01-05", candidate="1984-10-31"
             ),
         },
     )
-    shaped = shape_scored(scored)
-    assert (shaped["score"], shaped["match"]) == (0.75, True)
+    shaped = shape_scored(scored, {"name_match": 1.0, "dob_day_disjoint": -0.25})
+    assert (shaped["score"], shaped["match"]) == (0.65, False)
     assert shaped["explanation"] == {
-        "name_literal_match": {"score": 0.9, "detail": "exact name match"},
+        "name_match": {"contribution": 0.9, "detail": "exact name match"},
         "dob_day_disjoint": {
-            "score": -0.15,
+            "contribution": -0.25,
             "detail": "birth day mismatch",
             "query": "1984-01-05",
             "candidate": "1984-10-31",
@@ -206,7 +206,7 @@ def test_shape_scored_carries_explanation_evidence() -> None:
     }
 
 
-def test_shape_scored_caps_positives_but_keeps_every_negative() -> None:
+def test_shape_scored_ranks_every_feature_by_contribution() -> None:
     scored = ScoredEntity(
         id="Q1",
         caption="x",
@@ -214,18 +214,33 @@ def test_shape_scored_caps_positives_but_keeps_every_negative() -> None:
         score=0.5,
         match=False,
         explanations={
-            "a": FeatureResult(score=0.1),
-            "b": FeatureResult(score=0.9),
-            "c": FeatureResult(score=0.5),
-            "d": FeatureResult(score=0.7),
-            "pen1": FeatureResult(score=-0.05),
-            "pen2": FeatureResult(score=-0.95),
-            "zero": FeatureResult(score=0.0),
+            "weak": FeatureResult(score=0.5),
+            "name": FeatureResult(score=0.7),
+            "penalty": FeatureResult(score=1.0),
+            "agreed": FeatureResult(score=0.0, detail="Birth day match: 1984-10-31"),
+        },
+    )
+    coefficients = {"weak": 0.2, "name": 1.0, "penalty": -0.15, "agreed": -0.25}
+    explanation = shape_scored(scored, coefficients)["explanation"]
+    assert list(explanation) == ["name", "penalty", "weak", "agreed"]
+    assert explanation["agreed"] == {"contribution": 0.0, "detail": "Birth day match: 1984-10-31"}
+    assert str(explanation["agreed"]["contribution"]) == "0.0"
+
+
+def test_shape_scored_without_coefficients_keeps_raw_scores() -> None:
+    scored = ScoredEntity(
+        id="Q1",
+        caption="x",
+        schema="Person",
+        score=0.5,
+        match=False,
+        explanations={
+            "name_match": FeatureResult(score=0.5),
+            "dob_year_disjoint": FeatureResult(score=1.0),
         },
     )
     explanation = shape_scored(scored)["explanation"]
-    # top 3 positives plus both penalties, ranked by |score|; zero and the weakest positive dropped
-    assert list(explanation) == ["pen2", "b", "d", "c", "pen1"]
+    assert explanation == {"dob_year_disjoint": {"score": 1.0}, "name_match": {"score": 0.5}}
 
 
 def test_shape_relation_edge_refs_the_far_end() -> None:

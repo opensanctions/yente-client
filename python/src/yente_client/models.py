@@ -98,8 +98,9 @@ class ScoredEntity(Entity):
         Use when presenting *why* a candidate scored as it did: a match response
         enumerates every feature the algorithm considered, including ones that
         carried no signal (``0.0`` — a property the query didn't supply, or one
-        that doesn't apply to the schema). Those are noise in an explanation.
-        Negative features (penalties) are kept; only exact zeros are dropped.
+        that doesn't apply to the schema). Only exact zeros are dropped. Feature
+        scores are unsigned: whether a feature supports or penalises a match
+        comes from its coefficient in ``Algorithm.features``.
         ``explanations`` is left intact for callers that want the full set.
         """
         return {name: f for name, f in self.explanations.items() if f.score}

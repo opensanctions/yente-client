@@ -108,7 +108,7 @@ def test_scored_entity() -> None:
     assert se.explanations["name_match"].score == 0.9
 
 
-def test_contributing_explanations_drops_zero_keeps_negative() -> None:
+def test_contributing_explanations_drops_zero_features() -> None:
     se = ScoredEntity.model_validate(
         {
             "id": "Q1",
@@ -118,7 +118,7 @@ def test_contributing_explanations_drops_zero_keeps_negative() -> None:
             "match": False,
             "explanations": {
                 "name_match": {"score": 0.6},
-                "dob_disjoint": {"score": -0.95},
+                "dob_disjoint": {"score": 1.0},
                 "not_applicable": {"score": 0.0},
             },
         }
