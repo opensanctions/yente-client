@@ -397,7 +397,10 @@ async def match_entity(
     threshold) and an `explanation`: the scoring features with the query and
     candidate values each compared. A fuzzy name with nothing else agreeing is
     a lead, not an identification; identifiers and dates the query lacked are
-    what would settle it. Candidates are abridged to their identity, topics
+    what would settle it. Candidates come in score order, which reflects match
+    quality, not risk; `match_topics` gathers the topics of every candidate
+    with `match` true. `query_suggested_properties` names key properties the
+    query lacked. Candidates are abridged to their identity, topics
     and counts; profile the ones worth a closer look. When no candidate clears the
     cutoff, `near_misses` shows the closest ones and why they fell short. `checked`
     echoes the scope screened.
@@ -426,17 +429,30 @@ async def match_entity(
         "cutoff": cutoff,
     }
     results = [shaping.shape_scored(r) for r in resp.results]
+    query_properties = sorted(name for name, values in properties.items() if values)
+    suggested = [p for p in shaping.featured_names(schema) if p not in query_properties]
+    match_topics: dict[str, str] = {}
+    for result in results:
+        if result["match"]:
+            match_topics.update(result.get("topics", {}))
     out: dict[str, Any] = {
         "query_schema": schema,
+        "query_properties": query_properties,
+        "query_suggested_properties": suggested,
         "checked": {k: v for k, v in checked.items() if v is not None},
         "total": resp.total.value,
         "returned": len(results),
+        "match_topics": dict(sorted(match_topics.items())),
         "results": results,
     }
+    for key in ("query_suggested_properties", "match_topics"):
+        if not out[key]:
+            del out[key]
     if near_misses is not None and near_misses.results:
         out["near_misses"] = [shaping.shape_scored(r) for r in near_misses.results]
     # `checked` echoes the caller's own scope, which needs no glossing.
     codes = legend.collect_codes({k: v for k, v in out.items() if k != "checked"})
+    codes.add_properties(schema, [*query_properties, *suggested])
     return await _with_legend(out, client, codes)
 
 

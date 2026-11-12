@@ -442,7 +442,7 @@ def _stub_properties(entity: Entity) -> dict[str, list[str]]:
 
     A ``name`` that only repeats the caption is left out.
     """
-    props = _plain_values(entity, _featured_names(entity.schema_))
+    props = _plain_values(entity, featured_names(entity.schema_))
     if props.get("name") == [entity.caption]:
         del props["name"]
     return props
@@ -487,8 +487,8 @@ def _entry_rank(entry: dict[str, Any], unofficial: AbstractSet[str]) -> tuple[bo
 
 
 @functools.cache
-def _featured_names(schema: str) -> tuple[str, ...]:
-    """``schema``'s FtM featured properties, minus entity- and topic-typed ones."""
+def featured_names(schema: str) -> tuple[str, ...]:
+    """List ``schema``'s FtM featured properties, minus entity- and topic-typed ones."""
     if not schemas.has_schema(schema):
         return ()
     allowed = _summary_names(schema)

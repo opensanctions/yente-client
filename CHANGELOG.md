@@ -43,7 +43,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (`full=True` for the raw record). Prose moves to the new
     `fetch_entity_descriptions`, credited per source, official sources first.
   - `match_entity` shows the compared values behind each scoring feature,
-    gains `cutoff`, and returns `near_misses` when nothing clears it.
+    gains `cutoff`, and returns `near_misses` when nothing clears it. Its
+    root names the `query_properties` sent, the schema's key properties the
+    query lacked (`query_suggested_properties`), and the topics of every
+    matching candidate (`match_topics`).
   - Every entity-bearing response decodes its codes in one `legend`, dated by
     `as_of` (the collection set by the new `YENTE_MCP_DATASET`).
   - Candidates, search results and relationship far ends are abridged refs.

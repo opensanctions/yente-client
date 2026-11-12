@@ -49,16 +49,71 @@ async def _call(name: str, args: dict[str, Any]) -> dict[str, Any]:
     return json.loads("".join(getattr(block, "text", "") for block in content))
 
 
-async def test_empty_screen_legend_carries_only_as_of(
+async def test_empty_screen_legend_glosses_only_the_query(
     use_api: None, load_fixture: Callable[[str], dict[str, Any]]
 ) -> None:
     out = await _call("match_entity", {"schema": "Person", "properties": {"name": ["Nobody"]}})
     assert out["results"] == []
     assert "near_misses" not in out
+    assert "match_topics" not in out
     assert "as_of" not in out["checked"]
-    assert out["legend"].keys() - {"links"} == {"as_of"}
+    assert out["legend"].keys() - {"links"} == {"as_of", "properties"}
     updated = next(d for d in load_fixture("catalog")["datasets"] if d["name"] == "default")
     assert out["legend"]["as_of"].startswith(updated["updated_at"][:10])
+
+
+def _use_match_response(
+    monkeypatch: pytest.MonkeyPatch,
+    make_async_client: Callable[..., AsyncClient],
+    body: dict[str, Any],
+    catalog: dict[str, Any],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/match/"):
+            return httpx.Response(200, json=body)
+        if request.url.path == "/catalog":
+            return httpx.Response(200, json=catalog)
+        return httpx.Response(404, json={"detail": "not mocked"})
+
+    client = make_async_client(handler=handler)
+    monkeypatch.setattr(server, "_resolve_client", lambda: client)
+
+
+async def test_match_topics_gather_only_matching_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    make_async_client: Callable[..., AsyncClient],
+    load_fixture: Callable[[str], dict[str, Any]],
+) -> None:
+    body = load_fixture("match_high_score")
+    response = body["responses"]["q"]
+    near = json.loads(json.dumps(response["results"][0]))
+    near.update(id="NK-other", score=0.5, match=False)
+    near["properties"]["topics"] = ["role.pep"]
+    response["results"].append(near)
+    _use_match_response(monkeypatch, make_async_client, body, load_fixture("catalog"))
+
+    out = await _call("match_entity", {"schema": "Person", "properties": {"name": ["Zakharov"]}})
+    assert [r["id"] for r in out["results"]] == ["NK-aU5ybkbRFJucf8YMwsJvDw", "NK-other"]
+    assert out["match_topics"] == {"sanction": "Sanctioned"}
+
+
+async def test_match_names_query_and_suggested_properties(
+    use_api: None,
+) -> None:
+    out = await _call(
+        "match_entity",
+        {"schema": "Person", "properties": {"name": ["Jane Doe"], "birthDate": []}},
+    )
+    assert out["query_properties"] == ["name"]
+    assert out["query_suggested_properties"] == ["nationality", "birthDate"]
+    assert {"name", "nationality", "birthDate"} <= out["legend"]["properties"].keys()
+
+
+async def test_match_with_every_featured_property_suggests_nothing(use_api: None) -> None:
+    props = {"name": ["Jane Doe"], "nationality": ["gb"], "birthDate": ["1975"]}
+    out = await _call("match_entity", {"schema": "Person", "properties": props})
+    assert out["query_properties"] == ["birthDate", "name", "nationality"]
+    assert "query_suggested_properties" not in out
 
 
 async def test_search_legend_dates_the_server_dataset(
