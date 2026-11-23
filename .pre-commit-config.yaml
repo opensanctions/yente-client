@@ -17,7 +17,7 @@ repos:
   # An unpinned ruff breaks CI whenever a release changes the formatter
   # output. regen_model.py also formats generated code with this hook's ruff.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.5
+    rev: v0.17.6
     hooks:
       - id: ruff-check
         args: [--fix]
