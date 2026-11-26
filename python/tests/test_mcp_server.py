@@ -143,7 +143,7 @@ async def test_match_near_misses_come_from_the_same_request(
 
     out = await _call("match_entity", {"schema": "Person", "properties": {"name": ["Zakharov"]}})
     assert len(seen) == 1
-    assert seen[0].get("cutoff") == "0.0"
+    assert seen[0].get("cutoff") == "0.5"
     assert out["results"] == []
     assert out["total"] == 0
     assert [r["id"] for r in out["near_misses"]] == ["NK-0", "NK-1", "NK-2"]

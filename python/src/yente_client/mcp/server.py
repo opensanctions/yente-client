@@ -430,10 +430,10 @@ async def match_entity(
     near_misses: list[ScoredEntity] = []
     with _tool_errors():
         # The hosted API bills each /match request, so near misses come from
-        # the same request: without a caller cutoff, fetch every candidate and
-        # keep the matches.
+        # the same request: without a caller cutoff, fetch candidates below the
+        # threshold too and keep the matches. Below 0.5, candidates are noise.
         resp = await screen(
-            cutoff=0.0 if cutoff is None else cutoff,
+            cutoff=0.5 if cutoff is None else cutoff,
             limit=None if limit is None else _cap(limit),
         )
         scored = resp.results
