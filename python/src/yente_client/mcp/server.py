@@ -67,6 +67,7 @@ from yente_client.models import (
     DatasetsResponse,
     Entity,
     ProgramsResponse,
+    ScoredEntity,
     Statement,
     StatementsResponse,
 )
@@ -426,11 +427,20 @@ async def match_entity(
     screen = functools.partial(
         client.match, entity, threshold=threshold, datasets=[dataset], topics=topics
     )
+    near_misses: list[ScoredEntity] = []
     with _tool_errors():
-        resp = await screen(cutoff=cutoff, limit=None if limit is None else _cap(limit))
-        near_misses = None
-        if not resp.results and cutoff is None:
-            near_misses = await screen(cutoff=0.0, limit=_NEAR_MISS_LIMIT)
+        # The hosted API bills each /match request, so near misses come from
+        # the same request: without a caller cutoff, fetch every candidate and
+        # keep the matches.
+        resp = await screen(
+            cutoff=0.0 if cutoff is None else cutoff,
+            limit=None if limit is None else _cap(limit),
+        )
+        scored = resp.results
+        if cutoff is None:
+            scored = [r for r in resp.results if r.match]
+            if not scored:
+                near_misses = resp.results[:_NEAR_MISS_LIMIT]
     checked = {
         "dataset": dataset,
         "topics": topics,
@@ -439,7 +449,7 @@ async def match_entity(
     }
     algorithms = await _soft(_algorithms, client.algorithms)
     coefficients = legend.feature_coefficients(algorithms) if algorithms else {}
-    results = [shaping.shape_scored(r, coefficients) for r in resp.results]
+    results = [shaping.shape_scored(r, coefficients) for r in scored]
     query_properties = sorted(name for name, values in properties.items() if values)
     suggested = [p for p in shaping.featured_names(schema) if p not in query_properties]
     match_topics: dict[str, str] = {}
@@ -459,8 +469,8 @@ async def match_entity(
     for key in ("query_suggested_properties", "match_topics"):
         if not out[key]:
             del out[key]
-    if near_misses is not None and near_misses.results:
-        out["near_misses"] = [shaping.shape_scored(r, coefficients) for r in near_misses.results]
+    if near_misses:
+        out["near_misses"] = [shaping.shape_scored(r, coefficients) for r in near_misses]
     # `checked` echoes the caller's own scope, which needs no glossing.
     codes = legend.collect_codes({k: v for k, v in out.items() if k != "checked"})
     codes.add_properties(schema, [*query_properties, *suggested])

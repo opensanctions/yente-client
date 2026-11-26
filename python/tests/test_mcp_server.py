@@ -68,9 +68,13 @@ def _use_match_response(
     body: dict[str, Any],
     catalog: dict[str, Any],
     algorithms: dict[str, Any],
-) -> None:
+) -> list[httpx.QueryParams]:
+    """Serve ``body`` for every /match request; return the requests' params."""
+    seen: list[httpx.QueryParams] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.startswith("/match/"):
+            seen.append(request.url.params)
             return httpx.Response(200, json=body)
         if request.url.path == "/catalog":
             return httpx.Response(200, json=catalog)
@@ -80,6 +84,24 @@ def _use_match_response(
 
     client = make_async_client(handler=handler)
     monkeypatch.setattr(server, "_resolve_client", lambda: client)
+    return seen
+
+
+def _scored_body(
+    load_fixture: Callable[[str], dict[str, Any]], scores: list[float], total: int
+) -> dict[str, Any]:
+    """A /match body with one candidate per score, in the given order."""
+    body = load_fixture("match_high_score")
+    response = body["responses"]["q"]
+    template = response["results"][0]
+    results = []
+    for i, score in enumerate(scores):
+        candidate = json.loads(json.dumps(template))
+        candidate.update(id=f"NK-{i}", score=score, match=score >= 0.7)
+        results.append(candidate)
+    response["results"] = results
+    response["total"] = {"value": total, "relation": "eq"}
+    return body
 
 
 async def test_match_topics_gather_only_matching_candidates(
@@ -97,13 +119,34 @@ async def test_match_topics_gather_only_matching_candidates(
         monkeypatch, make_async_client, body, load_fixture("catalog"), load_fixture("algorithms")
     )
 
-    out = await _call("match_entity", {"schema": "Person", "properties": {"name": ["Zakharov"]}})
+    out = await _call(
+        "match_entity",
+        {"schema": "Person", "properties": {"name": ["Zakharov"]}, "cutoff": 0.4},
+    )
     assert [r["id"] for r in out["results"]] == ["NK-aU5ybkbRFJucf8YMwsJvDw", "NK-other"]
     assert out["match_topics"] == {"sanction": "Sanctioned"}
     assert out["results"][0]["explanation"]["name_match"] == {
         "contribution": 0.92,
         "detail": "exact match on lastName",
     }
+
+
+async def test_match_near_misses_come_from_the_same_request(
+    monkeypatch: pytest.MonkeyPatch,
+    make_async_client: Callable[..., AsyncClient],
+    load_fixture: Callable[[str], dict[str, Any]],
+) -> None:
+    body = _scored_body(load_fixture, [0.6, 0.5, 0.4, 0.3, 0.2], total=0)
+    seen = _use_match_response(
+        monkeypatch, make_async_client, body, load_fixture("catalog"), load_fixture("algorithms")
+    )
+
+    out = await _call("match_entity", {"schema": "Person", "properties": {"name": ["Zakharov"]}})
+    assert len(seen) == 1
+    assert seen[0].get("cutoff") == "0.0"
+    assert out["results"] == []
+    assert out["total"] == 0
+    assert [r["id"] for r in out["near_misses"]] == ["NK-0", "NK-1", "NK-2"]
 
 
 async def test_match_names_query_and_suggested_properties(
